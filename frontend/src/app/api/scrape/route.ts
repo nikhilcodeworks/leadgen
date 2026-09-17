@@ -6,7 +6,17 @@ import fs from 'fs';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { query, limit, headless, gemini_api_key } = body;
+    const {
+      query,
+      limit,
+      headless,
+      gemini_api_key,
+      hf_api_key,
+      ai_provider,
+      ai_model,
+      enable_fallback,
+      merge_existing
+    } = body;
 
     if (!query) {
       return Response.json({ error: 'Query is required' }, { status: 400 });
@@ -33,29 +43,104 @@ export async function POST(req: NextRequest) {
       query: query,
       limit: limit || 100,
       status: 'active',
+      stage: 'starting',
+      current: 0,
+      total: limit || 100,
+      progress: 0,
+      status_message: 'Initializing scraper process...',
+      provider: ai_provider || 'auto',
+      model: ai_model || 'auto',
       timestamp: new Date().toISOString()
     };
     fs.writeFileSync(statusFile, JSON.stringify(statusData, null, 2), 'utf-8');
 
-    // Spawn Python scraper in the background
-    const pythonCmd = 'python';
-    const args = ['scraper.py', query, '--limit', (limit || 100).toString(), '--job-id', jobId];
+    // Spawn Python scraper in the background - prefer virtual environment python if available
+    // On Windows, prefer pythonw.exe so no console / terminal window pops up
+    const isWin = process.platform === 'win32';
+    const venvPythonWin = isWin && fs.existsSync(path.join(backendDir, 'venv', 'Scripts', 'pythonw.exe'))
+      ? path.join(backendDir, 'venv', 'Scripts', 'pythonw.exe')
+      : path.join(backendDir, 'venv', 'Scripts', 'python.exe');
+    const venvPythonUnix = path.join(backendDir, 'venv', 'bin', 'python');
+    const dotVenvPythonWin = isWin && fs.existsSync(path.join(backendDir, '.venv', 'Scripts', 'pythonw.exe'))
+      ? path.join(backendDir, '.venv', 'Scripts', 'pythonw.exe')
+      : path.join(backendDir, '.venv', 'Scripts', 'python.exe');
+    const dotVenvPythonUnix = path.join(backendDir, '.venv', 'bin', 'python');
+
+    let pythonCmd = isWin ? 'pythonw' : 'python';
+    if (fs.existsSync(venvPythonWin)) {
+      pythonCmd = venvPythonWin;
+    } else if (fs.existsSync(dotVenvPythonWin)) {
+      pythonCmd = dotVenvPythonWin;
+    } else if (fs.existsSync(venvPythonUnix)) {
+      pythonCmd = venvPythonUnix;
+    } else if (fs.existsSync(dotVenvPythonUnix)) {
+      pythonCmd = dotVenvPythonUnix;
+    }
+
+    const args = ['-u', 'scraper.py', query, '--limit', (limit || 100).toString(), '--job-id', jobId];
     if (headless) {
       args.push('--headless');
     }
-
-    const env = { ...process.env };
-    if (gemini_api_key) {
-      env.GEMINI_API_KEY = gemini_api_key;
+    if (merge_existing === false) {
+      args.push('--no-merge');
+    }
+    if (ai_provider) {
+      args.push('--provider', ai_provider);
+    }
+    if (ai_model) {
+      args.push('--model', ai_model);
+    }
+    if (enable_fallback === false) {
+      args.push('--no-fallback');
     }
 
-    console.log(`Spawning scraper process for Job: ${jobId} Cwd: ${backendDir}`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PYTHONUNBUFFERED: '1',
+      PYTHONIOENCODING: 'utf-8'
+    };
+    if (gemini_api_key) {
+      env.GEMINI_API_KEY = gemini_api_key;
+    } else if (process.env.GEMINI_API_KEY) {
+      env.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    }
+    if (hf_api_key) {
+      env.HUGGINGFACE_API_KEY = hf_api_key;
+      env.HF_TOKEN = hf_api_key;
+    } else if (process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN) {
+      env.HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
+      env.HF_TOKEN = process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY;
+    }
+
+    const logFile = path.join(backendDir, 'leadsdata', `${jobId}.log`);
+    const logFd = fs.openSync(logFile, 'a');
+
+    console.log(`Spawning scraper process for Job: ${jobId} Cwd: ${backendDir} Log: ${logFile}`);
     const child = spawn(pythonCmd, args, {
       cwd: backendDir,
       detached: true,
-      stdio: 'ignore',
+      windowsHide: true,
+      stdio: ['ignore', logFd, logFd],
       env: env
     });
+
+    // Record child process PID for cancellation
+    try {
+      if (child.pid) {
+        statusData[jobId].pid = child.pid;
+        fs.writeFileSync(statusFile, JSON.stringify(statusData, null, 2), 'utf-8');
+        console.log(`Recorded PID ${child.pid} for Job ${jobId}`);
+      }
+    } catch (err) {
+      console.error('Error saving PID in status.json:', err);
+    }
+
+    // Close descriptor in parent; child maintains duplicate
+    try {
+      fs.closeSync(logFd);
+    } catch (e) {
+      // Ignored
+    }
 
     child.unref();
 

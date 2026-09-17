@@ -1,0 +1,9 @@
+.env
+*.env
+.env.local
+node_modules/
+backend/venv/
+backend/__pycache__/
+backend/data/
+backend/leadsdata/*.xlsx
+backend/leadsdata/*.log
