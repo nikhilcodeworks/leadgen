@@ -598,6 +598,7 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
     }
     
     endpoints = [
+        "https://router.huggingface.co/v1/chat/completions",
         "https://router.huggingface.co/hf-inference/v1/chat/completions",
         f"https://api-inference.huggingface.co/models/{model_name}/v1/chat/completions",
         "https://api-inference.huggingface.co/v1/chat/completions"
