@@ -32,11 +32,13 @@ import {
   Cloud,
   Server,
   Wifi,
-  Zap
+  Zap,
+  Terminal
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import EditLeadModal from '@/components/EditLeadModal';
 import Toast, { ToastMessage } from '@/components/Toast';
+import LogsModal from '@/components/LogsModal';
 
 interface LeadRun {
   filename: string | null;
@@ -181,6 +183,10 @@ function HomeContent() {
   // Job Running Notification State
   const [scraping, setScraping] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+
+  // Live Terminal Logs Modal State
+  const [showLogsModal, setShowLogsModal] = useState<boolean>(false);
+  const [logsModalJobId, setLogsModalJobId] = useState<string | null>(null);
 
   // Confirm Modal state for deletion / cancellation
   const [deleteConfirmRun, setDeleteConfirmRun] = useState<LeadRun | null>(null);
@@ -466,6 +472,7 @@ function HomeContent() {
       const data = await res.json();
       if (data.success) {
         setCurrentJobId(data.jobId);
+        setLogsModalJobId(data.jobId);
         setQuery('');
         showToast('Lead scraping job initiated successfully', 'success');
         // Switch to manager view to see job progress
@@ -705,6 +712,26 @@ function HomeContent() {
             />
           </div>
 
+          {/* Live Terminal / System Logs Trigger */}
+          <button
+            onClick={() => {
+              setLogsModalJobId(currentJobId);
+              setShowLogsModal(true);
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all shadow-sm ${
+              scraping || hasActiveJobs
+                ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/70 shadow-emerald-950/50'
+                : 'bg-slate-900/80 text-slate-300 border-slate-700 hover:bg-slate-800'
+            }`}
+            title="Open Live Terminal and View System Logs"
+          >
+            <Terminal className={`w-3.5 h-3.5 ${scraping || hasActiveJobs ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+            <span className="hidden sm:inline">Live Logs</span>
+            {(scraping || hasActiveJobs) && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            )}
+          </button>
+
           {/* Unified System Readiness Status Button */}
           <button
             onClick={() => setShowBackendModal(true)}
@@ -778,6 +805,25 @@ function HomeContent() {
             <span>Leads Manager</span>
             {runs.filter(r => r.status === 'active').length > 0 && (
               <span className="ml-auto w-2 h-2 bg-indigo-400 rounded-full animate-ping" />
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setLogsModalJobId(currentJobId);
+              setShowLogsModal(true);
+            }}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-all font-semibold text-slate-400 hover:bg-slate-900/50 hover:text-slate-200"
+          >
+            <div className="flex items-center gap-3">
+              <Terminal className={`w-4 h-4 ${scraping || hasActiveJobs ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+              <span>Live Terminal</span>
+            </div>
+            {(scraping || hasActiveJobs) && (
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
             )}
           </button>
 
@@ -1355,23 +1401,36 @@ function HomeContent() {
                           </div>
                         </div>
 
-                        {activeTab === 'scrape' ? (
+                        <div className="flex items-center gap-2">
                           <button
-                            onClick={() => setActiveTab('manager')}
-                            className="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition-all flex items-center gap-1.5"
+                            onClick={() => {
+                              setLogsModalJobId(activeRun.jobId);
+                              setShowLogsModal(true);
+                            }}
+                            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-all flex items-center gap-1.5 shadow-sm shadow-emerald-950/40"
                           >
-                            <span>Open Manager</span>
-                            <FolderOpen className="w-3.5 h-3.5" />
+                            <Terminal className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                            <span>Live Logs</span>
                           </button>
-                        ) : (
-                          <button
-                            onClick={() => setActiveTab('scrape')}
-                            className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5"
-                          >
-                            <span>New Scrape</span>
-                            <Search className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+
+                          {activeTab === 'scrape' ? (
+                            <button
+                              onClick={() => setActiveTab('manager')}
+                              className="px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition-all flex items-center gap-1.5"
+                            >
+                              <span>Open Manager</span>
+                              <FolderOpen className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setActiveTab('scrape')}
+                              className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5"
+                            >
+                              <span>New Scrape</span>
+                              <Search className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -2757,6 +2816,40 @@ function HomeContent() {
           </div>
         </div>
       )}
+
+      {/* Floating Live Terminal Trigger Button */}
+      <button
+        onClick={() => {
+          setLogsModalJobId(currentJobId);
+          setShowLogsModal(true);
+        }}
+        className={`fixed bottom-6 right-6 z-40 flex items-center gap-2.5 px-4 py-2.5 rounded-full shadow-2xl border backdrop-blur-md transition-all duration-300 hover:scale-105 cursor-pointer ${
+          scraping || hasActiveJobs
+            ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-300 shadow-emerald-900/50 ring-2 ring-emerald-500/40'
+            : 'bg-slate-900/95 border-slate-700/80 text-slate-300 shadow-black/80 hover:bg-slate-800'
+        }`}
+        title="Open Live Terminal & System Logs"
+      >
+        <Terminal className={`w-4 h-4 ${scraping || hasActiveJobs ? 'text-emerald-400 animate-pulse' : 'text-indigo-400'}`} />
+        <span className="text-xs font-mono font-bold tracking-wide">
+          {scraping || hasActiveJobs ? '⚡ Live Logs (Active)' : '🖥️ Terminal Logs'}
+        </span>
+        {(scraping || hasActiveJobs) && (
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+        )}
+      </button>
+
+      {/* Live Logs Terminal Modal */}
+      <LogsModal
+        isOpen={showLogsModal}
+        onClose={() => setShowLogsModal(false)}
+        backendUrl={backendUrl}
+        activeJobId={logsModalJobId || currentJobId}
+        availableRuns={runs.map(r => ({ jobId: r.jobId, query: r.query, status: r.status }))}
+      />
 
       {/* Floating Toast Notification */}
       <Toast toast={toast} onClose={() => setToast(null)} />

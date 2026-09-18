@@ -65,22 +65,32 @@ def write_status_data(data: dict):
 
 def run_scraper_subprocess(cmd: list, env: dict, log_file: Path, job_id: str):
     try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(SCRIPT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env
+        )
+        # Record PID
+        status = read_status_data()
+        if job_id in status:
+            status[job_id]["pid"] = proc.pid
+            write_status_data(status)
+
         with open(log_file, "a", encoding="utf-8") as log_fd:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=str(SCRIPT_DIR),
-                stdout=log_fd,
-                stderr=log_fd,
-                env=env
-            )
-            # Record PID
-            status = read_status_data()
-            if job_id in status:
-                status[job_id]["pid"] = proc.pid
-                write_status_data(status)
-            proc.wait()
+            for line in proc.stdout:
+                # 1. Live print in Colab / server console
+                print(f"[{job_id}] {line.rstrip()}", flush=True)
+                # 2. Append to log file for API streaming
+                log_fd.write(line)
+                log_fd.flush()
+
+        proc.wait()
     except Exception as e:
-        print(f"Error running scraper subprocess: {e}")
+        print(f"[{job_id}] Error running scraper subprocess: {e}", flush=True)
         status = read_status_data()
         if job_id in status:
             status[job_id]["status"] = "failed"
@@ -91,6 +101,49 @@ def run_scraper_subprocess(cmd: list, env: dict, log_file: Path, job_id: str):
 @app.get("/")
 def root():
     return {"status": "ok", "message": "LeadGen AI Backend is running with 100% Hugging Face AI!"}
+
+
+@app.get("/api/logs")
+def get_logs(jobId: Optional[str] = None, tail: int = 100):
+    status_data = read_status_data()
+    target_job = jobId
+
+    if not target_job:
+        for j_id, j_info in status_data.items():
+            if j_info.get("status") == "active":
+                target_job = j_id
+                break
+        if not target_job and status_data:
+            target_job = list(status_data.keys())[-1]
+
+    if not target_job:
+        log_files = sorted(LEADSDATA_DIR.glob("*.log"), key=lambda x: x.stat().st_mtime, reverse=True)
+        if log_files:
+            target_job = log_files[0].stem
+
+    if not target_job:
+        return {"jobId": None, "lines": [], "status": "idle", "message": "No active or past job logs available"}
+
+    log_path = LEADSDATA_DIR / f"{target_job}.log"
+    lines = []
+    if log_path.exists():
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                all_lines = f.readlines()
+                lines = [l.rstrip() for l in all_lines[-tail:]]
+        except Exception as e:
+            lines = [f"Error reading log file: {e}"]
+
+    job_info = status_data.get(target_job, {})
+    return {
+        "jobId": target_job,
+        "query": job_info.get("query"),
+        "status": job_info.get("status", "unknown"),
+        "stage": job_info.get("stage", "running"),
+        "progress": job_info.get("progress", 0),
+        "statusMessage": job_info.get("status_message", ""),
+        "lines": lines
+    }
 
 
 @app.post("/api/scrape")
