@@ -239,7 +239,12 @@ export async function POST(req: NextRequest) {
       process.env.GEMINI_API_KEY = rawGemini;
     }
 
-    fs.writeFileSync(ENV_FILE_PATH, envContent.trim() + '\n', 'utf-8');
+    // In local development, write to .env.local; on Vercel/serverless (read-only filesystem), safely fallback
+    try {
+      fs.writeFileSync(ENV_FILE_PATH, envContent.trim() + '\n', 'utf-8');
+    } catch (fsErr: any) {
+      console.warn('Filesystem is read-only (Vercel/Serverless). Settings are persisted in memory and browser localStorage.');
+    }
 
     return Response.json({
       success: true,
