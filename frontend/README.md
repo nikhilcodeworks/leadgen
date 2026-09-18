@@ -1,6 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LeadGen Pro Frontend
 
-## Getting Started
+LeadGen Pro Next.js Web Application with Colab Cloud Backend & AI Integration.
 
 First, run the development server:
 
