@@ -91,10 +91,19 @@ function LeadDetailInner() {
       return;
     }
 
+    const customBackendUrl = typeof window !== 'undefined' ? (localStorage.getItem('custom_backend_url') || '') : '';
+    const getHeaders = (extra: Record<string, string> = {}) => {
+      const h: Record<string, string> = { ...extra };
+      if (customBackendUrl) h['x-backend-url'] = customBackendUrl;
+      return h;
+    };
+
     const fetchLeadDetails = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/leads?file=${encodeURIComponent(file)}&leadId=${encodeURIComponent(leadId)}`);
+        const res = await fetch(`/api/leads?file=${encodeURIComponent(file)}&leadId=${encodeURIComponent(leadId)}`, {
+          headers: getHeaders()
+        });
         const data = await res.json();
         if (data.data) {
           setLead(data.data);
@@ -123,12 +132,17 @@ function LeadDetailInner() {
     setSaveSuccess(false);
 
     try {
+      const customBackendUrl = typeof window !== 'undefined' ? (localStorage.getItem('custom_backend_url') || '') : '';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (customBackendUrl) headers['x-backend-url'] = customBackendUrl;
+
       const res = await fetch('/api/leads', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           file,
           leadId,
+          backend_url: customBackendUrl || null,
           updates: {
             "Contact Method": contactMethod,
             "Outreach Status": outreachStatus,

@@ -28,7 +28,11 @@ import {
   Activity,
   Phone,
   MessageSquare,
-  Globe
+  Globe,
+  Cloud,
+  Server,
+  Wifi,
+  Zap
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import EditLeadModal from '@/components/EditLeadModal';
@@ -164,6 +168,15 @@ function HomeContent() {
   const [hfApiKey, setHfApiKey] = useState('');
   const [hasEnvHfKey, setHasEnvHfKey] = useState(false);
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+
+  // Backend URL configuration (Google Colab Cloud vs Local PC)
+  const [backendUrl, setBackendUrl] = useState<string>('');
+  const [backendUrlInput, setBackendUrlInput] = useState<string>('');
+  const [backendConnected, setBackendConnected] = useState<boolean | null>(null);
+  const [backendStatusMsg, setBackendStatusMsg] = useState<string>('');
+  const [showBackendModal, setShowBackendModal] = useState<boolean>(false);
+  const [isTestingBackend, setIsTestingBackend] = useState<boolean>(false);
+  const [isSavingBackend, setIsSavingBackend] = useState<boolean>(false);
   
   // Job Running Notification State
   const [scraping, setScraping] = useState(false);
@@ -183,7 +196,82 @@ function HomeContent() {
     setToast({ id: Date.now().toString(), message, type });
   };
 
-  // Load configuration from localStorage on mount
+  // Helper for dynamic API headers
+  const getApiHeaders = (extra: Record<string, string> = {}, explicitUrl?: string) => {
+    const headers: Record<string, string> = { ...extra };
+    const targetUrl = explicitUrl !== undefined ? explicitUrl : backendUrl;
+    if (targetUrl) {
+      headers['x-backend-url'] = targetUrl;
+    }
+    return headers;
+  };
+
+  // Test connection to backend
+  const testBackendConnection = async (urlToTest: string, verbose = true) => {
+    setIsTestingBackend(true);
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backendUrl: urlToTest, testOnly: true })
+      });
+      const data = await res.json();
+      setBackendConnected(data.isConnected);
+      setBackendStatusMsg(data.message || '');
+      if (verbose) {
+        if (data.isConnected) {
+          showToast(data.message || 'Connected to backend successfully!', 'success');
+        } else {
+          showToast(data.message || 'Could not reach backend URL', 'error');
+        }
+      }
+      return data.isConnected;
+    } catch (e: any) {
+      setBackendConnected(false);
+      setBackendStatusMsg(`Connection error: ${e.message}`);
+      if (verbose) showToast(`Connection error: ${e.message}`, 'error');
+      return false;
+    } finally {
+      setIsTestingBackend(false);
+    }
+  };
+
+  // Save backend URL permanently
+  const handleSaveBackendUrl = async (urlToSave: string) => {
+    setIsSavingBackend(true);
+    const cleanUrl = urlToSave.trim().replace(/\/+$/, '');
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backendUrl: cleanUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBackendUrl(cleanUrl);
+        setBackendUrlInput(cleanUrl);
+        setBackendConnected(data.isConnected);
+        setBackendStatusMsg(data.message || '');
+        if (cleanUrl) {
+          localStorage.setItem('custom_backend_url', cleanUrl);
+          showToast(`Connected to Colab Backend (${cleanUrl})`, 'success');
+        } else {
+          localStorage.removeItem('custom_backend_url');
+          showToast('Switched to Local PC Backend', 'success');
+        }
+        setShowBackendModal(false);
+        fetchRuns(false, cleanUrl);
+      } else {
+        showToast(data.error || 'Failed to save backend configuration', 'error');
+      }
+    } catch (e: any) {
+      showToast(`Error saving backend: ${e.message}`, 'error');
+    } finally {
+      setIsSavingBackend(false);
+    }
+  };
+
+  // Load configuration from localStorage and /api/config on mount
   useEffect(() => {
     const savedGeminiKey = localStorage.getItem('gemini_api_key');
     if (savedGeminiKey) setGeminiApiKey(savedGeminiKey);
@@ -198,13 +286,45 @@ function HomeContent() {
 
     const savedModel = localStorage.getItem('ai_model');
     if (savedModel) setAiModel(savedModel);
+
+    // Fetch active backend configuration
+    const initBackend = async () => {
+      try {
+        const res = await fetch('/api/config');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.backendUrl) {
+            setBackendUrl(data.backendUrl);
+            setBackendUrlInput(data.backendUrl);
+            setBackendConnected(data.isConnected);
+            setBackendStatusMsg(data.message || '');
+            localStorage.setItem('custom_backend_url', data.backendUrl);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      const localSaved = localStorage.getItem('custom_backend_url') || '';
+      if (localSaved) {
+        setBackendUrl(localSaved);
+        setBackendUrlInput(localSaved);
+        testBackendConnection(localSaved, false);
+      } else {
+        setBackendConnected(true);
+        setBackendStatusMsg('Local PC backend active');
+      }
+    };
+
+    initBackend();
   }, []);
 
   // Fetch runs list
-  const fetchRuns = async (silent = false) => {
+  const fetchRuns = async (silent = false, explicitBackendUrl?: string) => {
     if (!silent) setLoadingRuns(true);
     try {
-      const res = await fetch('/api/leads');
+      const res = await fetch('/api/leads', {
+        headers: getApiHeaders({}, explicitBackendUrl)
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (data.runs) {
@@ -262,7 +382,7 @@ function HomeContent() {
       const finalLimit = isCustomLimit ? (parseInt(customLimitInput) || 5) : limit;
       const res = await fetch('/api/scrape', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           query,
           limit: finalLimit,
@@ -272,7 +392,8 @@ function HomeContent() {
           ai_provider: aiProvider,
           ai_model: chosenModel || null,
           enable_fallback: enableFallback,
-          merge_existing: mergeExisting
+          merge_existing: mergeExisting,
+          backend_url: backendUrl || null
         })
       });
       const data = await res.json();
@@ -305,7 +426,9 @@ function HomeContent() {
     setWebsiteFilter('all');
     setLoadingFile(true);
     try {
-      const res = await fetch(`/api/leads?file=${encodeURIComponent(targetFile)}`);
+      const res = await fetch(`/api/leads?file=${encodeURIComponent(targetFile)}`, {
+        headers: getApiHeaders()
+      });
       const data = await res.json();
       if (data.data) {
         setFileLeads(data.data);
@@ -338,11 +461,12 @@ function HomeContent() {
     try {
       const res = await fetch('/api/leads', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           file: selectedFile,
           leadId: leadIdentifier,
-          updates
+          updates,
+          backend_url: backendUrl || null
         })
       });
       const data = await res.json();
@@ -430,7 +554,8 @@ function HomeContent() {
       const separator = fileParam && jobParam ? '&' : '';
       
       const res = await fetch(`/api/leads?${fileParam}${separator}${jobParam}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getApiHeaders()
       });
       const data = await res.json();
       if (data.success) {
@@ -496,106 +621,268 @@ function HomeContent() {
           </div>
         </div>
 
-        {/* AI API Keys & Provider Settings in top-right */}
-        <div className="relative">
-          <button
-            onClick={() => setShowApiKeyInput(!showApiKeyInput)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-              hfApiKey || hasEnvHfKey
-                ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30 hover:bg-emerald-900/40'
-                : 'bg-amber-950/40 text-amber-400 border-amber-500/30 hover:bg-amber-900/40'
-            }`}
-          >
-            <Key className="w-3.5 h-3.5" />
-            <span>
-              {hfApiKey || hasEnvHfKey
-                ? 'Hugging Face AI Active'
-                : 'Configure HF Token'}
-            </span>
-            <span className={`w-2 h-2 rounded-full ${hfApiKey || hasEnvHfKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-          </button>
+        {/* Top-Right Action Controls: Backend Environment & AI API Keys */}
+        <div className="flex items-center gap-3">
+          {/* 1. Backend Server Environment Selector (Cloud Colab vs Local PC) */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setShowBackendModal(!showBackendModal);
+                if (showApiKeyInput) setShowApiKeyInput(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                backendUrl
+                  ? backendConnected === false
+                    ? 'bg-rose-950/40 text-rose-300 border-rose-500/30 hover:bg-rose-900/40'
+                    : 'bg-indigo-950/50 text-indigo-300 border-indigo-500/40 hover:bg-indigo-900/40'
+                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'
+              }`}
+              title={backendUrl ? `Connected: ${backendUrl}` : 'Running on Local PC'}
+            >
+              {backendUrl ? <Cloud className="w-3.5 h-3.5 text-indigo-400" /> : <Server className="w-3.5 h-3.5 text-slate-400" />}
+              <span>
+                {backendUrl ? 'Colab Cloud (12GB)' : 'Local PC Backend'}
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  backendUrl
+                    ? backendConnected === false
+                      ? 'bg-rose-400 animate-ping'
+                      : 'bg-emerald-400'
+                    : 'bg-slate-500'
+                }`}
+              />
+            </button>
 
-          {/* AI Keys Modal dropdown */}
-          {showApiKeyInput && (
-            <div className="absolute right-0 mt-2 w-96 p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 z-50">
-              <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
-                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                  <Key className="w-4 h-4 text-indigo-400" />
-                  <span>Hugging Face AI Credentials</span>
-                </h3>
-                <button
-                  onClick={() => setShowApiKeyInput(false)}
-                  className="text-slate-400 hover:text-slate-200 text-xs"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Hugging Face Access Token */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-200">Hugging Face Token (HF_TOKEN)</label>
-                  {(hfApiKey || hasEnvHfKey) && (
-                    <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Active
-                    </span>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 mb-1.5 leading-relaxed">
-                  Used for Qwen 2.5 72B & Llama 3.3 models. Free token at{' '}
-                  <a
-                    href="https://huggingface.co/settings/tokens"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-400 hover:underline font-medium"
+            {/* Backend Configuration Dropdown Modal */}
+            {showBackendModal && (
+              <div className="absolute right-0 mt-2 w-96 p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 z-50">
+                <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
+                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <Cloud className="w-4 h-4 text-indigo-400" />
+                    <span>Backend Server Environment</span>
+                  </h3>
+                  <button
+                    onClick={() => setShowBackendModal(false)}
+                    className="text-slate-400 hover:text-slate-200 text-xs"
                   >
-                    huggingface.co/settings/tokens
-                  </a>
-                </p>
-                {hasEnvHfKey && !hfApiKey && (
-                  <p className="text-[11px] text-emerald-400/90 mb-1.5">
-                    Found in <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">.env</code>
-                  </p>
-                )}
-                <input
-                  type="password"
-                  placeholder="Paste your Hugging Face token (hf_...)..."
-                  defaultValue={hfApiKey}
-                  id="hf-key-input"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                />
-              </div>
+                    ✕
+                  </button>
+                </div>
 
-              {/* Actions */}
-              <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-800/80">
-                <button
-                  onClick={() => {
-                    saveApiKeys('', '');
-                  }}
-                  className="text-rose-400 hover:text-rose-300 text-[11px]"
-                >
-                  Clear Custom Token
-                </button>
-                <div className="flex gap-2">
+                <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                  Select where Playwright and the scraping engine runs. Google Colab provides <strong>12GB cloud RAM with 0% load on your PC</strong>.
+                </p>
+
+                {/* Quick Toggle: Colab Cloud vs Local PC */}
+                <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!backendUrlInput && backendUrl) setBackendUrlInput(backendUrl);
+                    }}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      backendUrlInput || backendUrl
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Cloud className="w-3.5 h-3.5" />
+                    <span>Colab Cloud</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBackendUrlInput('');
+                      handleSaveBackendUrl('');
+                    }}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      !backendUrlInput && !backendUrl
+                        ? 'bg-slate-800 text-slate-200 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Server className="w-3.5 h-3.5" />
+                    <span>Local PC</span>
+                  </button>
+                </div>
+
+                {/* Colab URL Input */}
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-200">
+                      Cloudflare Tunnel URL
+                    </label>
+                    {backendUrl && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 border ${
+                        backendConnected === false 
+                          ? 'bg-rose-950/60 text-rose-300 border-rose-500/30' 
+                          : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${backendConnected === false ? 'bg-rose-400' : 'bg-emerald-400'}`} />
+                        {backendConnected === false ? 'Offline' : 'Connected'}
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="url"
+                    placeholder="https://your-tunnel.trycloudflare.com"
+                    value={backendUrlInput}
+                    onChange={e => setBackendUrlInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                    Paste the <code className="text-indigo-400">trycloudflare.com</code> link generated by Step 3 in your Colab runner.
+                  </p>
+                </div>
+
+                {/* Status Message */}
+                {backendStatusMsg && (
+                  <div className="mb-3 p-2 bg-slate-950 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span className="truncate">{backendStatusMsg}</span>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBackendUrlInput('');
+                      handleSaveBackendUrl('');
+                    }}
+                    className="text-rose-400 hover:text-rose-300 text-[11px]"
+                  >
+                    Reset to Local
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={isTestingBackend || !backendUrlInput.trim()}
+                      onClick={() => testBackendConnection(backendUrlInput.trim())}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+                    >
+                      {isTestingBackend ? 'Testing...' : 'Test'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSavingBackend}
+                      onClick={() => handleSaveBackendUrl(backendUrlInput.trim())}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30 disabled:opacity-50"
+                    >
+                      {isSavingBackend ? 'Saving...' : 'Save & Connect'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 2. AI API Keys & Provider Settings in top-right */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setShowApiKeyInput(!showApiKeyInput);
+                if (showBackendModal) setShowBackendModal(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                hfApiKey || hasEnvHfKey
+                  ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30 hover:bg-emerald-900/40'
+                  : 'bg-amber-950/40 text-amber-400 border-amber-500/30 hover:bg-amber-900/40'
+              }`}
+            >
+              <Key className="w-3.5 h-3.5" />
+              <span>
+                {hfApiKey || hasEnvHfKey
+                  ? 'Hugging Face AI Active'
+                  : 'Configure HF Token'}
+              </span>
+              <span className={`w-2 h-2 rounded-full ${hfApiKey || hasEnvHfKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            </button>
+
+            {/* AI Keys Modal dropdown */}
+            {showApiKeyInput && (
+              <div className="absolute right-0 mt-2 w-96 p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 z-50">
+                <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
+                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <Key className="w-4 h-4 text-indigo-400" />
+                    <span>Hugging Face AI Credentials</span>
+                  </h3>
                   <button
                     onClick={() => setShowApiKeyInput(false)}
-                    className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 text-xs"
+                    className="text-slate-400 hover:text-slate-200 text-xs"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      const hEl = document.getElementById('hf-key-input') as HTMLInputElement;
-                      saveApiKeys('', hEl?.value || '');
-                    }}
-                    className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30"
-                  >
-                    Save Token
+                    ✕
                   </button>
                 </div>
+
+                {/* Hugging Face Access Token */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-200">Hugging Face Token (HF_TOKEN)</label>
+                    {(hfApiKey || hasEnvHfKey) && (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mb-1.5 leading-relaxed">
+                    Used for Qwen 2.5 72B & Llama 3.3 models. Free token at{' '}
+                    <a
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-400 hover:underline font-medium"
+                    >
+                      huggingface.co/settings/tokens
+                    </a>
+                  </p>
+                  {hasEnvHfKey && !hfApiKey && (
+                    <p className="text-[11px] text-emerald-400/90 mb-1.5">
+                      Found in <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">.env</code>
+                    </p>
+                  )}
+                  <input
+                    type="password"
+                    placeholder="Paste your Hugging Face token (hf_...)..."
+                    defaultValue={hfApiKey}
+                    id="hf-key-input"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                  />
+                </div>
+
+                {/* Actions */}
+                <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-800/80">
+                  <button
+                    onClick={() => {
+                      saveApiKeys('', '');
+                    }}
+                    className="text-rose-400 hover:text-rose-300 text-[11px]"
+                  >
+                    Clear Custom Token
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowApiKeyInput(false)}
+                      className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        const hEl = document.getElementById('hf-key-input') as HTMLInputElement;
+                        saveApiKeys('', hEl?.value || '');
+                      }}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30"
+                    >
+                      Save Token
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
 
@@ -1309,6 +1596,49 @@ function HomeContent() {
                   </div>
 
                   <form onSubmit={handleStartScrape} className="flex flex-col gap-6 bg-slate-900/30 p-6 border border-slate-900 rounded-2xl backdrop-blur-md">
+                    {/* Execution Engine Banner */}
+                    <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
+                      backendUrl
+                        ? 'bg-indigo-950/30 border-indigo-500/30'
+                        : 'bg-slate-950/60 border-slate-800/80'
+                    }`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-2.5 rounded-xl shrink-0 ${
+                          backendUrl ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700/50'
+                        }`}>
+                          {backendUrl ? <Cloud className="w-5 h-5" /> : <Server className="w-5 h-5" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-200">
+                              {backendUrl ? 'Google Colab Cloud Engine (12GB RAM)' : 'Local PC Execution'}
+                            </span>
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                              backendUrl
+                                ? backendConnected === false
+                                  ? 'bg-rose-950/60 text-rose-300 border-rose-500/30'
+                                  : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {backendUrl ? (backendConnected === false ? 'Offline' : '0% PC Lag • Active') : 'Local CPU'}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                            {backendUrl
+                              ? backendUrl
+                              : 'Runs on your computer. Connect your Colab Cloudflare URL for zero PC lag.'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowBackendModal(true)}
+                        className="ml-3 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-lg text-xs font-semibold transition-all shrink-0 shadow-sm"
+                      >
+                        {backendUrl ? 'Change URL' : 'Connect Colab'}
+                      </button>
+                    </div>
+
                 {/* Search query input */}
                 <div className="flex flex-col gap-2">
                   <label htmlFor="query" className="text-sm font-semibold text-slate-300">

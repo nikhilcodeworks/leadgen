@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Query is required' }, { status: 400 });
     }
 
-    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    const backendUrl = req.headers.get('x-backend-url') || body.backend_url || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
     if (backendUrl) {
       try {
         const cleanBackend = backendUrl.replace(/\/+$/, '');
