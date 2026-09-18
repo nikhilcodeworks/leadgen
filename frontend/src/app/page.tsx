@@ -206,69 +206,133 @@ function HomeContent() {
     return headers;
   };
 
-  // Test connection to backend
-  const testBackendConnection = async (urlToTest: string, verbose = true) => {
-    setIsTestingBackend(true);
+  // System Readiness & Verification State
+  const [isSystemReady, setIsSystemReady] = useState<boolean | null>(null);
+  const [testResults, setTestResults] = useState<{
+    backend?: { ok: boolean; message: string; timeMs?: number };
+    hf?: { ok: boolean; message: string; username?: string };
+    gemini?: { ok: boolean; message: string };
+    message?: string;
+  } | null>(null);
+  const [isVerifyingSystem, setIsVerifyingSystem] = useState(false);
+
+  // Test connection to backend and AI API Key simultaneously
+  const handleVerifySystem = async (verbose = true) => {
+    setIsVerifyingSystem(true);
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backendUrl: urlToTest, testOnly: true })
+        body: JSON.stringify({
+          backendUrl: backendUrlInput.trim(),
+          hfApiKey: hfApiKey.trim(),
+          geminiApiKey: geminiApiKey.trim(),
+          testOnly: true
+        })
       });
       const data = await res.json();
-      setBackendConnected(data.isConnected);
-      setBackendStatusMsg(data.message || '');
+      setTestResults({
+        backend: data.backendResult,
+        hf: data.hfResult,
+        gemini: data.geminiResult,
+        message: data.message
+      });
+      setIsSystemReady(data.isReady);
+      setBackendConnected(data.backendResult?.ok);
+      setBackendStatusMsg(data.backendResult?.message || '');
+
       if (verbose) {
-        if (data.isConnected) {
-          showToast(data.message || 'Connected to backend successfully!', 'success');
+        if (data.isReady) {
+          showToast('🎉 All Systems Ready! Backend and AI Key verified.', 'success');
         } else {
-          showToast(data.message || 'Could not reach backend URL', 'error');
+          showToast(data.message || 'System verification failed', 'error');
         }
       }
-      return data.isConnected;
+      return data.isReady;
     } catch (e: any) {
-      setBackendConnected(false);
-      setBackendStatusMsg(`Connection error: ${e.message}`);
-      if (verbose) showToast(`Connection error: ${e.message}`, 'error');
+      setIsSystemReady(false);
+      if (verbose) showToast(`Verification error: ${e.message}`, 'error');
       return false;
     } finally {
-      setIsTestingBackend(false);
+      setIsVerifyingSystem(false);
     }
   };
 
-  // Save backend URL permanently
-  const handleSaveBackendUrl = async (urlToSave: string) => {
+  // Test connection to backend only
+  const testBackendConnection = async (urlToTest: string, verbose = true) => {
+    return handleVerifySystem(verbose);
+  };
+
+  // Save backend URL and API keys permanently
+  const handleSaveSystemConfig = async () => {
     setIsSavingBackend(true);
-    const cleanUrl = urlToSave.trim().replace(/\/+$/, '');
+    const cleanUrl = backendUrlInput.trim().replace(/\/+$/, '');
+    const cleanHf = hfApiKey.trim();
+    const cleanGemini = geminiApiKey.trim();
+
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backendUrl: cleanUrl })
+        body: JSON.stringify({
+          backendUrl: cleanUrl,
+          hfApiKey: cleanHf,
+          geminiApiKey: cleanGemini,
+          testOnly: false
+        })
       });
       const data = await res.json();
       if (data.success) {
         setBackendUrl(cleanUrl);
-        setBackendUrlInput(cleanUrl);
-        setBackendConnected(data.isConnected);
-        setBackendStatusMsg(data.message || '');
+        setBackendConnected(data.backendResult?.ok);
+        setBackendStatusMsg(data.backendResult?.message || '');
+        setIsSystemReady(data.isReady);
+        setTestResults({
+          backend: data.backendResult,
+          hf: data.hfResult,
+          gemini: data.geminiResult,
+          message: data.message
+        });
+
         if (cleanUrl) {
           localStorage.setItem('custom_backend_url', cleanUrl);
-          showToast(`Connected to Colab Backend (${cleanUrl})`, 'success');
         } else {
           localStorage.removeItem('custom_backend_url');
-          showToast('Switched to Local PC Backend', 'success');
+        }
+
+        if (cleanHf) {
+          localStorage.setItem('hf_api_key', cleanHf);
+        } else {
+          localStorage.removeItem('hf_api_key');
+        }
+
+        if (cleanGemini) {
+          localStorage.setItem('gemini_api_key', cleanGemini);
+        } else {
+          localStorage.removeItem('gemini_api_key');
+        }
+
+        if (data.isReady) {
+          showToast('🎉 All Systems Saved & Ready to Scrape!', 'success');
+        } else {
+          showToast(data.message || 'Settings saved.', 'info');
         }
         setShowBackendModal(false);
         fetchRuns(false, cleanUrl);
       } else {
-        showToast(data.error || 'Failed to save backend configuration', 'error');
+        showToast(data.error || 'Failed to save configuration', 'error');
       }
     } catch (e: any) {
-      showToast(`Error saving backend: ${e.message}`, 'error');
+      showToast(`Error saving configuration: ${e.message}`, 'error');
     } finally {
       setIsSavingBackend(false);
     }
+  };
+
+  // Save backend URL helper
+  const handleSaveBackendUrl = async (urlToSave: string) => {
+    setBackendUrlInput(urlToSave);
+    return handleSaveSystemConfig();
   };
 
   // Load configuration from localStorage and /api/config on mount
@@ -296,11 +360,14 @@ function HomeContent() {
           if (data.backendUrl) {
             setBackendUrl(data.backendUrl);
             setBackendUrlInput(data.backendUrl);
-            setBackendConnected(data.isConnected);
-            setBackendStatusMsg(data.message || '');
             localStorage.setItem('custom_backend_url', data.backendUrl);
-            return;
           }
+          if (data.isConnected !== undefined) setBackendConnected(data.isConnected);
+          if (data.message) setBackendStatusMsg(data.message);
+          if (data.isReady !== undefined) setIsSystemReady(data.isReady);
+          if (data.hasHfKey) setHasEnvHfKey(true);
+          if (data.hasGeminiKey) setHasEnvApiKey(true);
+          return;
         }
       } catch (e) {}
 
@@ -308,7 +375,7 @@ function HomeContent() {
       if (localSaved) {
         setBackendUrl(localSaved);
         setBackendUrlInput(localSaved);
-        testBackendConnection(localSaved, false);
+        handleVerifySystem(false);
       } else {
         setBackendConnected(true);
         setBackendStatusMsg('Local PC backend active');
@@ -621,268 +688,402 @@ function HomeContent() {
           </div>
         </div>
 
-        {/* Top-Right Action Controls: Backend Environment & AI API Keys */}
+        {/* Top-Right Action Controls: Unified System Status & Engine Modal */}
         <div className="flex items-center gap-3">
-          {/* 1. Backend Server Environment Selector (Cloud Colab vs Local PC) */}
-          <div className="relative">
-            <button
-              onClick={() => {
-                setShowBackendModal(!showBackendModal);
-                if (showApiKeyInput) setShowApiKeyInput(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+          {/* Quick Engine Indicator */}
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-300">
+            {backendUrl ? <Cloud className="w-3.5 h-3.5 text-indigo-400" /> : <Server className="w-3.5 h-3.5 text-slate-400" />}
+            <span>{backendUrl ? 'Colab 12GB Cloud' : 'Local PC Backend'}</span>
+            <span
+              className={`w-2 h-2 rounded-full ${
                 backendUrl
                   ? backendConnected === false
-                    ? 'bg-rose-950/40 text-rose-300 border-rose-500/30 hover:bg-rose-900/40'
-                    : 'bg-indigo-950/50 text-indigo-300 border-indigo-500/40 hover:bg-indigo-900/40'
-                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:bg-slate-800'
+                    ? 'bg-rose-400 animate-ping'
+                    : 'bg-indigo-400'
+                  : 'bg-slate-500'
               }`}
-              title={backendUrl ? `Connected: ${backendUrl}` : 'Running on Local PC'}
-            >
-              {backendUrl ? <Cloud className="w-3.5 h-3.5 text-indigo-400" /> : <Server className="w-3.5 h-3.5 text-slate-400" />}
-              <span>
-                {backendUrl ? 'Colab Cloud (12GB)' : 'Local PC Backend'}
-              </span>
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  backendUrl
-                    ? backendConnected === false
-                      ? 'bg-rose-400 animate-ping'
-                      : 'bg-emerald-400'
-                    : 'bg-slate-500'
-                }`}
-              />
-            </button>
+            />
+          </div>
 
-            {/* Backend Configuration Dropdown Modal */}
-            {showBackendModal && (
-              <div className="absolute right-0 mt-2 w-96 p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 z-50">
-                <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
-                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                    <Cloud className="w-4 h-4 text-indigo-400" />
-                    <span>Backend Server Environment</span>
-                  </h3>
+          {/* Unified System Readiness Status Button */}
+          <button
+            onClick={() => setShowBackendModal(true)}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all shadow-sm ${
+              isSystemReady
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/60 shadow-emerald-950/40'
+                : isSystemReady === false
+                ? 'bg-rose-950/50 text-rose-300 border-rose-500/40 hover:bg-rose-900/50'
+                : 'bg-indigo-950/50 text-indigo-300 border-indigo-500/40 hover:bg-indigo-900/50'
+            }`}
+            title="Configure Colab URL & AI API Key, and verify readiness"
+          >
+            {isSystemReady ? (
+              <>
+                <Zap className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+                <span className="font-bold">Ready to Scrape</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              </>
+            ) : isSystemReady === false ? (
+              <>
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                <span>System Not Ready</span>
+                <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping" />
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Setup Backend & AI</span>
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+              </>
+            )}
+          </button>
+
+          {/* Comprehensive System Setup & Live Readiness Modal */}
+          {showBackendModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150"
+              onClick={e => {
+                if (e.target === e.currentTarget) setShowBackendModal(false);
+              }}
+            >
+              <div className="relative w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 overflow-hidden flex flex-col max-h-[90vh]">
+                {/* Modal Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/90">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl">
+                      <Zap className="w-5 h-5 text-indigo-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>System Setup & Live Readiness</span>
+                        {isSystemReady && (
+                          <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase">
+                            Ready
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Configure Google Colab Backend URL & AI API Key, test both, and start scraping.
+                      </p>
+                    </div>
+                  </div>
                   <button
                     onClick={() => setShowBackendModal(false)}
-                    className="text-slate-400 hover:text-slate-200 text-xs"
+                    className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-800 transition-all text-xs"
                   >
                     ✕
                   </button>
                 </div>
 
-                <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-                  Select where Playwright and the scraping engine runs. Google Colab provides <strong>12GB cloud RAM with 0% load on your PC</strong>.
-                </p>
+                {/* Modal Body */}
+                <div className="p-6 overflow-y-auto space-y-5">
+                  {/* Section 1: Backend Execution Environment */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                        <Cloud className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>1. Backend Server Environment</span>
+                      </label>
+                      {backendUrl ? (
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 border ${
+                            backendConnected === false
+                              ? 'bg-rose-950/60 text-rose-300 border-rose-500/30'
+                              : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              backendConnected === false ? 'bg-rose-400' : 'bg-emerald-400'
+                            }`}
+                          />
+                          {backendConnected === false ? 'Offline' : 'Colab Cloud Active'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+                          Local PC Mode
+                        </span>
+                      )}
+                    </div>
 
-                {/* Quick Toggle: Colab Cloud vs Local PC */}
-                <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!backendUrlInput && backendUrl) setBackendUrlInput(backendUrl);
-                    }}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      backendUrlInput || backendUrl
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    <Cloud className="w-3.5 h-3.5" />
-                    <span>Colab Cloud</span>
-                  </button>
+                    {/* Quick Mode Switch */}
+                    <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!backendUrlInput && backendUrl) setBackendUrlInput(backendUrl);
+                        }}
+                        className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${
+                          backendUrlInput || backendUrl
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Cloud className="w-4 h-4" />
+                        <span>Google Colab (12GB Cloud RAM)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBackendUrlInput('');
+                        }}
+                        className={`flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold transition-all ${
+                          !backendUrlInput && !backendUrl
+                            ? 'bg-slate-800 text-slate-100 shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Server className="w-4 h-4" />
+                        <span>Local PC Backend</span>
+                      </button>
+                    </div>
+
+                    {/* URL Input */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-300">
+                          Cloudflare Tunnel URL
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Generated from Colab Cell 3
+                        </span>
+                      </div>
+                      <input
+                        type="url"
+                        placeholder="https://your-name-here.trycloudflare.com"
+                        value={backendUrlInput}
+                        onChange={e => setBackendUrlInput(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono transition-colors"
+                      />
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Paste the <code className="text-indigo-400 font-mono">https://...trycloudflare.com</code> URL produced by your Google Colab runner. Leave empty to execute locally on your PC.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Section 2: AI Enrichment Key */}
+                  <div className="border-t border-slate-800/80 pt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
+                        <Key className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>2. AI API Token (Hugging Face / Gemini)</span>
+                      </label>
+                      {(hfApiKey || hasEnvHfKey) && (
+                        <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Token Active
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-300">
+                          Hugging Face Token (HF_TOKEN)
+                        </span>
+                        <a
+                          href="https://huggingface.co/settings/tokens"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 underline"
+                        >
+                          <span>Get Free Token</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                      <input
+                        type="password"
+                        placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        value={hfApiKey}
+                        onChange={e => setHfApiKey(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono transition-colors"
+                      />
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Free Hugging Face token powers high-tier Qwen 2.5 72B & Llama 3.3 for lead enrichment & classification.
+                      </p>
+                    </div>
+
+                    {/* Optional Gemini Key field */}
+                    <div className="mt-3 pt-2">
+                      <details className="text-xs text-slate-400 group">
+                        <summary className="cursor-pointer text-[11px] font-semibold text-slate-400 hover:text-slate-300 list-none flex items-center gap-1.5">
+                          <span className="transition-transform group-open:rotate-90">▸</span>
+                          <span>Optional: Google Gemini API Key</span>
+                        </summary>
+                        <div className="mt-2 space-y-1 pl-3 border-l border-slate-800">
+                          <input
+                            type="password"
+                            placeholder="AIzaSy..."
+                            value={geminiApiKey}
+                            onChange={e => setGeminiApiKey(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                          <p className="text-[10px] text-slate-500">
+                            Optional fallback key if Hugging Face rate limits are reached.
+                          </p>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Live Test & Readiness Feedback */}
+                  {(testResults || isSystemReady !== null || isVerifyingSystem) && (
+                    <div className="border-t border-slate-800/80 pt-4 space-y-3">
+                      <label className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>3. Real-Time Verification Status</span>
+                      </label>
+
+                      {/* Loading indicator */}
+                      {isVerifyingSystem && (
+                        <div className="p-3 bg-slate-950 rounded-xl border border-indigo-500/30 flex items-center gap-3">
+                          <Loader2 className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
+                          <span className="text-xs text-slate-300">
+                            Pinging Backend URL and authenticating AI API Key...
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Individual Test Cards */}
+                      {testResults && !isVerifyingSystem && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {/* Backend Result */}
+                          <div
+                            className={`p-3 rounded-xl border flex items-center gap-2.5 ${
+                              testResults.backend?.ok
+                                ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
+                                : 'bg-rose-950/20 border-rose-500/30 text-rose-300'
+                            }`}
+                          >
+                            {testResults.backend?.ok ? (
+                              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold truncate">
+                                {testResults.backend?.ok ? 'Backend Server: Online' : 'Backend Server: Failed'}
+                              </p>
+                              <p className="text-[10px] opacity-80 truncate">
+                                {testResults.backend?.message || 'Ready'}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* AI Token Result */}
+                          <div
+                            className={`p-3 rounded-xl border flex items-center gap-2.5 ${
+                              testResults.hf?.ok || testResults.gemini?.ok
+                                ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
+                                : 'bg-rose-950/20 border-rose-500/30 text-rose-300'
+                            }`}
+                          >
+                            {testResults.hf?.ok || testResults.gemini?.ok ? (
+                              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold truncate">
+                                {testResults.hf?.ok
+                                  ? `AI Key: Valid (@${testResults.hf.username || 'user'})`
+                                  : testResults.gemini?.ok
+                                  ? 'Gemini Key: Valid'
+                                  : 'AI Key: Verification Failed'}
+                              </p>
+                              <p className="text-[10px] opacity-80 truncate">
+                                {testResults.hf?.message || testResults.gemini?.message || 'Requires valid token'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Prominent READY Banner */}
+                      {isSystemReady && !isVerifyingSystem && (
+                        <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/60 to-teal-950/60 border border-emerald-500/40 flex items-center gap-3.5 shadow-lg shadow-emerald-950/40">
+                          <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/40 shrink-0">
+                            <CheckCircle className="w-6 h-6" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-black tracking-wide text-emerald-300">
+                                SYSTEM STATUS: READY TO SCRAPE
+                              </span>
+                              <span className="text-[10px] font-bold bg-emerald-400 text-slate-950 px-2 py-0.5 rounded-full uppercase">
+                                Verified
+                              </span>
+                            </div>
+                            <p className="text-xs text-emerald-200/80 mt-0.5">
+                              Backend ({backendUrlInput || backendUrl ? 'Google Colab 12GB Cloud' : 'Local PC'}) and AI API Key are verified. 0% PC Lag.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {isSystemReady === false && !isVerifyingSystem && (
+                        <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-500/30 flex items-center gap-2.5 text-xs text-rose-300">
+                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>{testResults?.message || 'Verification incomplete. Please check the URL and API key.'}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Modal Footer */}
+                <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800/80 bg-slate-900/90">
                   <button
                     type="button"
                     onClick={() => {
                       setBackendUrlInput('');
                       handleSaveBackendUrl('');
                     }}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                      !backendUrlInput && !backendUrl
-                        ? 'bg-slate-800 text-slate-200 shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
+                    className="text-slate-400 hover:text-rose-400 text-xs transition-colors"
                   >
-                    <Server className="w-3.5 h-3.5" />
-                    <span>Local PC</span>
+                    Reset to Local PC
                   </button>
-                </div>
-
-                {/* Colab URL Input */}
-                <div className="mb-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-200">
-                      Cloudflare Tunnel URL
-                    </label>
-                    {backendUrl && (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 border ${
-                        backendConnected === false 
-                          ? 'bg-rose-950/60 text-rose-300 border-rose-500/30' 
-                          : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${backendConnected === false ? 'bg-rose-400' : 'bg-emerald-400'}`} />
-                        {backendConnected === false ? 'Offline' : 'Connected'}
-                      </span>
-                    )}
-                  </div>
-                  <input
-                    type="url"
-                    placeholder="https://your-tunnel.trycloudflare.com"
-                    value={backendUrlInput}
-                    onChange={e => setBackendUrlInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                  />
-                  <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
-                    Paste the <code className="text-indigo-400">trycloudflare.com</code> link generated by Step 3 in your Colab runner.
-                  </p>
-                </div>
-
-                {/* Status Message */}
-                {backendStatusMsg && (
-                  <div className="mb-3 p-2 bg-slate-950 rounded-lg border border-slate-800/80 text-[11px] text-slate-300 flex items-center gap-2">
-                    <Activity className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                    <span className="truncate">{backendStatusMsg}</span>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBackendUrlInput('');
-                      handleSaveBackendUrl('');
-                    }}
-                    className="text-rose-400 hover:text-rose-300 text-[11px]"
-                  >
-                    Reset to Local
-                  </button>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2.5">
                     <button
                       type="button"
-                      disabled={isTestingBackend || !backendUrlInput.trim()}
-                      onClick={() => testBackendConnection(backendUrlInput.trim())}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+                      disabled={isVerifyingSystem}
+                      onClick={() => handleVerifySystem(true)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 shadow-sm"
                     >
-                      {isTestingBackend ? 'Testing...' : 'Test'}
+                      {isVerifyingSystem ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                          <span>Testing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3.5 h-3.5 text-amber-400" />
+                          <span>⚡ Test Both</span>
+                        </>
+                      )}
                     </button>
                     <button
                       type="button"
                       disabled={isSavingBackend}
-                      onClick={() => handleSaveBackendUrl(backendUrlInput.trim())}
-                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30 disabled:opacity-50"
+                      onClick={handleSaveSystemConfig}
+                      className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-2 disabled:opacity-50"
                     >
-                      {isSavingBackend ? 'Saving...' : 'Save & Connect'}
+                      {isSavingBackend ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Save & Connect</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-
-          {/* 2. AI API Keys & Provider Settings in top-right */}
-          <div className="relative">
-            <button
-              onClick={() => {
-                setShowApiKeyInput(!showApiKeyInput);
-                if (showBackendModal) setShowBackendModal(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-                hfApiKey || hasEnvHfKey
-                  ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30 hover:bg-emerald-900/40'
-                  : 'bg-amber-950/40 text-amber-400 border-amber-500/30 hover:bg-amber-900/40'
-              }`}
-            >
-              <Key className="w-3.5 h-3.5" />
-              <span>
-                {hfApiKey || hasEnvHfKey
-                  ? 'Hugging Face AI Active'
-                  : 'Configure HF Token'}
-              </span>
-              <span className={`w-2 h-2 rounded-full ${hfApiKey || hasEnvHfKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            </button>
-
-            {/* AI Keys Modal dropdown */}
-            {showApiKeyInput && (
-              <div className="absolute right-0 mt-2 w-96 p-5 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl shadow-black/90 z-50">
-                <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
-                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                    <Key className="w-4 h-4 text-indigo-400" />
-                    <span>Hugging Face AI Credentials</span>
-                  </h3>
-                  <button
-                    onClick={() => setShowApiKeyInput(false)}
-                    className="text-slate-400 hover:text-slate-200 text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                {/* Hugging Face Access Token */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-200">Hugging Face Token (HF_TOKEN)</label>
-                    {(hfApiKey || hasEnvHfKey) && (
-                      <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Active
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-400 mb-1.5 leading-relaxed">
-                    Used for Qwen 2.5 72B & Llama 3.3 models. Free token at{' '}
-                    <a
-                      href="https://huggingface.co/settings/tokens"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-indigo-400 hover:underline font-medium"
-                    >
-                      huggingface.co/settings/tokens
-                    </a>
-                  </p>
-                  {hasEnvHfKey && !hfApiKey && (
-                    <p className="text-[11px] text-emerald-400/90 mb-1.5">
-                      Found in <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">.env</code>
-                    </p>
-                  )}
-                  <input
-                    type="password"
-                    placeholder="Paste your Hugging Face token (hf_...)..."
-                    defaultValue={hfApiKey}
-                    id="hf-key-input"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                  />
-                </div>
-
-                {/* Actions */}
-                <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-800/80">
-                  <button
-                    onClick={() => {
-                      saveApiKeys('', '');
-                    }}
-                    className="text-rose-400 hover:text-rose-300 text-[11px]"
-                  >
-                    Clear Custom Token
-                  </button>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowApiKeyInput(false)}
-                      className="px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 text-xs"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => {
-                        const hEl = document.getElementById('hf-key-input') as HTMLInputElement;
-                        saveApiKeys('', hEl?.value || '');
-                      }}
-                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30"
-                    >
-                      Save Token
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -1596,17 +1797,23 @@ function HomeContent() {
                   </div>
 
                   <form onSubmit={handleStartScrape} className="flex flex-col gap-6 bg-slate-900/30 p-6 border border-slate-900 rounded-2xl backdrop-blur-md">
-                    {/* Execution Engine Banner */}
+                    {/* Execution Engine & System Readiness Banner */}
                     <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
-                      backendUrl
+                      isSystemReady
+                        ? 'bg-emerald-950/20 border-emerald-500/30 shadow-sm shadow-emerald-950/20'
+                        : backendUrl
                         ? 'bg-indigo-950/30 border-indigo-500/30'
                         : 'bg-slate-950/60 border-slate-800/80'
                     }`}>
                       <div className="flex items-center gap-3 min-w-0">
                         <div className={`p-2.5 rounded-xl shrink-0 ${
-                          backendUrl ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700/50'
+                          isSystemReady
+                            ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                            : backendUrl
+                            ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
+                            : 'bg-slate-800 text-slate-400 border border-slate-700/50'
                         }`}>
-                          {backendUrl ? <Cloud className="w-5 h-5" /> : <Server className="w-5 h-5" />}
+                          {isSystemReady ? <Zap className="w-5 h-5 text-emerald-400" /> : backendUrl ? <Cloud className="w-5 h-5" /> : <Server className="w-5 h-5" />}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
@@ -1614,28 +1821,42 @@ function HomeContent() {
                               {backendUrl ? 'Google Colab Cloud Engine (12GB RAM)' : 'Local PC Execution'}
                             </span>
                             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                              backendUrl
+                              isSystemReady
+                                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                                : backendUrl
                                 ? backendConnected === false
                                   ? 'bg-rose-950/60 text-rose-300 border-rose-500/30'
-                                  : 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
                                 : 'bg-slate-800 text-slate-400 border-slate-700'
                             }`}>
-                              {backendUrl ? (backendConnected === false ? 'Offline' : '0% PC Lag • Active') : 'Local CPU'}
+                              {isSystemReady
+                                ? '🟢 READY TO SCRAPE'
+                                : backendUrl
+                                ? backendConnected === false
+                                  ? 'Offline'
+                                  : 'Setup Needed'
+                                : 'Local CPU'}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-                            {backendUrl
+                            {isSystemReady
+                              ? `Colab Cloud + AI Key active. 0% PC Lag • Scraping at peak speed.`
+                              : backendUrl
                               ? backendUrl
-                              : 'Runs on your computer. Connect your Colab Cloudflare URL for zero PC lag.'}
+                              : 'Runs on your PC. Connect your Colab Cloudflare URL for zero PC lag.'}
                           </p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowBackendModal(true)}
-                        className="ml-3 px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 rounded-lg text-xs font-semibold transition-all shrink-0 shadow-sm"
+                        className={`ml-3 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all shrink-0 shadow-sm border ${
+                          isSystemReady
+                            ? 'bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border-emerald-500/30'
+                            : 'bg-indigo-600 hover:bg-indigo-500 text-white border-transparent'
+                        }`}
                       >
-                        {backendUrl ? 'Change URL' : 'Connect Colab'}
+                        {isSystemReady ? '⚙️ Verify / Change' : backendUrl ? '⚡ Test & Verify' : 'Connect Colab'}
                       </button>
                     </div>
 
@@ -1832,14 +2053,23 @@ function HomeContent() {
 
                 {/* API Key Status Notice */}
                 {!hfApiKey && !hasEnvHfKey ? (
-                  <div className="p-3.5 bg-amber-950/20 border border-amber-500/10 rounded-xl flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-xs text-amber-300 font-semibold">No Hugging Face Token detected</p>
-                      <p className="text-[11px] text-amber-400/80 mt-0.5 leading-relaxed">
-                        Scraping will run, but AI analysis will be skipped. Configure your Hugging Face Token in the top-right button to enable AI insights.
-                      </p>
+                  <div className="p-3.5 bg-amber-950/20 border border-amber-500/20 rounded-xl flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs text-amber-300 font-semibold">AI API Key Needed</p>
+                        <p className="text-[11px] text-amber-400/80 mt-0.5 leading-relaxed">
+                          Enter your free Hugging Face token to enable AI enrichment & automated business analysis.
+                        </p>
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowBackendModal(true)}
+                      className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold shrink-0 transition-all"
+                    >
+                      Enter Key
+                    </button>
                   </div>
                 ) : (
                   <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl flex items-center justify-between text-xs text-emerald-400">
@@ -1851,10 +2081,10 @@ function HomeContent() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setShowApiKeyInput(true)}
-                      className="text-[11px] underline hover:text-emerald-300"
+                      onClick={() => setShowBackendModal(true)}
+                      className="text-[11px] underline hover:text-emerald-300 font-semibold"
                     >
-                      Manage Keys
+                      Manage Key & Test
                     </button>
                   </div>
                 )}
