@@ -152,8 +152,8 @@ function HomeContent() {
   const [mergeExisting, setMergeExisting] = useState(true);
   
   // AI Provider & Model Configuration
-  const [aiProvider, setAiProvider] = useState<'auto' | 'gemini' | 'huggingface'>('auto');
-  const [aiModel, setAiModel] = useState<string>('gemini-flash-latest');
+  const [aiProvider, setAiProvider] = useState<'huggingface'>('huggingface');
+  const [aiModel, setAiModel] = useState<string>('Qwen/Qwen2.5-72B-Instruct');
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [customModelInput, setCustomModelInput] = useState('');
   const [enableFallback, setEnableFallback] = useState(true);
@@ -501,21 +501,18 @@ function HomeContent() {
           <button
             onClick={() => setShowApiKeyInput(!showApiKeyInput)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-              geminiApiKey || hasEnvApiKey || hfApiKey || hasEnvHfKey
+              hfApiKey || hasEnvHfKey
                 ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30 hover:bg-emerald-900/40'
                 : 'bg-amber-950/40 text-amber-400 border-amber-500/30 hover:bg-amber-900/40'
             }`}
           >
             <Key className="w-3.5 h-3.5" />
             <span>
-              {geminiApiKey || hasEnvApiKey || hfApiKey || hasEnvHfKey
-                ? `AI Keys Active (${[
-                    geminiApiKey || hasEnvApiKey ? 'Gemini' : null,
-                    hfApiKey || hasEnvHfKey ? 'HF' : null
-                  ].filter(Boolean).join(' + ')})`
-                : 'Configure AI Keys'}
+              {hfApiKey || hasEnvHfKey
+                ? 'Hugging Face AI Active'
+                : 'Configure HF Token'}
             </span>
-            <span className={`w-2 h-2 rounded-full ${geminiApiKey || hasEnvApiKey || hfApiKey || hasEnvHfKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <span className={`w-2 h-2 rounded-full ${hfApiKey || hasEnvHfKey ? 'bg-emerald-400' : 'bg-amber-400'}`} />
           </button>
 
           {/* AI Keys Modal dropdown */}
@@ -524,7 +521,7 @@ function HomeContent() {
               <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
                 <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <Key className="w-4 h-4 text-indigo-400" />
-                  <span>AI Model Credentials</span>
+                  <span>Hugging Face AI Credentials</span>
                 </h3>
                 <button
                   onClick={() => setShowApiKeyInput(false)}
@@ -534,31 +531,7 @@ function HomeContent() {
                 </button>
               </div>
 
-              {/* 1. Google Gemini Key */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-200">Google Gemini API Key</label>
-                  {(geminiApiKey || hasEnvApiKey) && (
-                    <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Active
-                    </span>
-                  )}
-                </div>
-                {hasEnvApiKey && !geminiApiKey && (
-                  <p className="text-[11px] text-emerald-400/90 mb-1.5">
-                    Found in <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">.env</code>
-                  </p>
-                )}
-                <input
-                  type="password"
-                  placeholder="Paste GEMINI_API_KEY (or leave blank to use .env)..."
-                  defaultValue={geminiApiKey}
-                  id="gemini-key-input"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                />
-              </div>
-
-              {/* 2. Hugging Face Access Token */}
+              {/* Hugging Face Access Token */}
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-semibold text-slate-200">Hugging Face Token (HF_TOKEN)</label>
@@ -568,13 +541,13 @@ function HomeContent() {
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-slate-400 mb-1.5">
-                  Used for open models (Qwen 2.5 72B, Llama 3.3, Mistral). Free token at{' '}
+                <p className="text-[11px] text-slate-400 mb-1.5 leading-relaxed">
+                  Used for Qwen 2.5 72B & Llama 3.3 models. Free token at{' '}
                   <a
                     href="https://huggingface.co/settings/tokens"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-indigo-400 hover:underline"
+                    className="text-indigo-400 hover:underline font-medium"
                   >
                     huggingface.co/settings/tokens
                   </a>
@@ -586,7 +559,7 @@ function HomeContent() {
                 )}
                 <input
                   type="password"
-                  placeholder="Paste Hugging Face Token (hf_...)..."
+                  placeholder="Paste your Hugging Face token (hf_...)..."
                   defaultValue={hfApiKey}
                   id="hf-key-input"
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
@@ -601,7 +574,7 @@ function HomeContent() {
                   }}
                   className="text-rose-400 hover:text-rose-300 text-[11px]"
                 >
-                  Clear Custom Keys
+                  Clear Custom Token
                 </button>
                 <div className="flex gap-2">
                   <button
@@ -612,13 +585,12 @@ function HomeContent() {
                   </button>
                   <button
                     onClick={() => {
-                      const gEl = document.getElementById('gemini-key-input') as HTMLInputElement;
                       const hEl = document.getElementById('hf-key-input') as HTMLInputElement;
-                      saveApiKeys(gEl?.value || '', hEl?.value || '');
+                      saveApiKeys('', hEl?.value || '');
                     }}
                     className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-all shadow-md shadow-indigo-600/30"
                   >
-                    Save Keys
+                    Save Token
                   </button>
                 </div>
               </div>
@@ -1466,71 +1438,15 @@ function HomeContent() {
                     </span>
                   </div>
 
-                  {/* Provider Selector Tabs */}
-                  <div className="grid grid-cols-3 gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAiProvider('auto');
-                        setAiModel('gemini-flash-latest');
-                        setIsCustomModel(false);
-                        localStorage.setItem('ai_provider', 'auto');
-                      }}
-                      className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center flex items-center justify-center gap-1.5 ${
-                        aiProvider === 'auto'
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Auto Fallback</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAiProvider('gemini');
-                        setAiModel('gemini-flash-latest');
-                        setIsCustomModel(false);
-                        localStorage.setItem('ai_provider', 'gemini');
-                      }}
-                      className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center flex items-center justify-center gap-1.5 ${
-                        aiProvider === 'gemini'
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>Google Gemini</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAiProvider('huggingface');
-                        setAiModel('Qwen/Qwen2.5-72B-Instruct');
-                        setIsCustomModel(false);
-                        localStorage.setItem('ai_provider', 'huggingface');
-                      }}
-                      className={`py-2 px-3 rounded-lg text-xs font-semibold transition-all text-center flex items-center justify-center gap-1.5 ${
-                        aiProvider === 'huggingface'
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span>Hugging Face</span>
-                    </button>
-                  </div>
-
-                  {/* Model Dropdown */}
+                  {/* Hugging Face Model Selection */}
                   <div className="flex flex-col gap-1.5">
                     <div className="flex justify-between items-center text-xs">
-                      <label htmlFor="ai-model" className="text-slate-300 font-medium">
-                        Select Model
+                      <label htmlFor="ai-model" className="text-slate-300 font-medium flex items-center gap-1.5">
+                        <span>Hugging Face Model</span>
+                        <span className="text-[10px] text-indigo-400 bg-indigo-950/60 border border-indigo-500/20 px-1.5 py-0.2 rounded font-mono">100% Free Inference</span>
                       </label>
                       <span className="text-[10px] text-slate-500 font-mono">
-                        {aiProvider === 'auto'
-                          ? 'Primary Model (Falls back automatically)'
-                          : aiProvider === 'huggingface'
-                          ? 'HF Serverless Router'
-                          : 'Google Gemini API'}
+                        Serverless Router
                       </span>
                     </div>
 
@@ -1549,38 +1465,17 @@ function HomeContent() {
                       }}
                       className="bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-4 py-2.5 text-xs text-slate-100 transition-all cursor-pointer font-mono"
                     >
-                      {aiProvider === 'auto' && (
-                        <>
-                          <option value="gemini-flash-latest">Gemini Flash (Latest) + HF Qwen Fallback (Recommended)</option>
-                          <option value="gemini-3.7-flash">Gemini 3.7 Flash + HF Qwen Fallback</option>
-                          <option value="gemini-3.6-flash">Gemini 3.6 Flash + HF Fallback</option>
-                          <option value="Qwen/Qwen2.5-72B-Instruct">HF Qwen 2.5 72B + Gemini Fallback</option>
-                          <option value="custom">Custom Model...</option>
-                        </>
-                      )}
-                      {aiProvider === 'gemini' && (
-                        <>
-                          <option value="gemini-flash-latest">gemini-flash-latest (Fast & Highly Reliable - Recommended)</option>
-                          <option value="gemini-3.7-flash">gemini-3.7-flash (Latest Preview)</option>
-                          <option value="gemini-3.6-flash">gemini-3.6-flash (Production Ready)</option>
-                          <option value="custom">Custom Gemini Model...</option>
-                        </>
-                      )}
-                      {aiProvider === 'huggingface' && (
-                        <>
-                          <option value="Qwen/Qwen2.5-72B-Instruct">Qwen/Qwen2.5-72B-Instruct (Recommended - Outstanding JSON)</option>
-                          <option value="meta-llama/Llama-3.3-70B-Instruct">meta-llama/Llama-3.3-70B-Instruct</option>
-                          <option value="mistralai/Mistral-7B-Instruct-v0.3">mistralai/Mistral-7B-Instruct-v0.3</option>
-                          <option value="deepseek-ai/DeepSeek-R1-Distill-Qwen-32B">deepseek-ai/DeepSeek-R1-Distill-Qwen-32B</option>
-                          <option value="custom">Custom Hugging Face Model...</option>
-                        </>
-                      )}
+                      <option value="Qwen/Qwen2.5-72B-Instruct">Qwen/Qwen2.5-72B-Instruct (Recommended - Best Quality & Speed)</option>
+                      <option value="meta-llama/Llama-3.3-70B-Instruct">meta-llama/Llama-3.3-70B-Instruct (Meta 70B)</option>
+                      <option value="mistralai/Mistral-7B-Instruct-v0.3">mistralai/Mistral-7B-Instruct-v0.3 (Fast & Lightweight)</option>
+                      <option value="deepseek-ai/DeepSeek-R1-Distill-Qwen-32B">deepseek-ai/DeepSeek-R1-Distill-Qwen-32B</option>
+                      <option value="custom">Custom Hugging Face Model...</option>
                     </select>
 
                     {isCustomModel && (
                       <input
                         type="text"
-                        placeholder="Enter model repo ID (e.g. Qwen/Qwen2.5-Coder-32B-Instruct or gemini-2.5-pro)"
+                        placeholder="Enter model repo ID (e.g. Qwen/Qwen2.5-Coder-32B-Instruct)"
                         value={customModelInput}
                         onChange={e => setCustomModelInput(e.target.value)}
                         className="w-full mt-1 bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-3 py-2 text-xs text-slate-200 font-mono"
@@ -1598,7 +1493,7 @@ function HomeContent() {
                         className="w-4 h-4 text-indigo-600 border-slate-700 bg-slate-950 rounded focus:ring-indigo-500"
                       />
                       <span className="text-xs text-slate-300 font-medium">
-                        Auto-switch models on 503 error / High Demand spikes
+                        Auto-switch Hugging Face models on 503 / High Load
                       </span>
                     </label>
                     <span className="text-[10px] text-emerald-400/90 font-mono">Zero Failure</span>
@@ -1606,13 +1501,13 @@ function HomeContent() {
                 </div>
 
                 {/* API Key Status Notice */}
-                {!geminiApiKey && !hasEnvApiKey && !hfApiKey && !hasEnvHfKey ? (
+                {!hfApiKey && !hasEnvHfKey ? (
                   <div className="p-3.5 bg-amber-950/20 border border-amber-500/10 rounded-xl flex items-start gap-3">
                     <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-xs text-amber-300 font-semibold">No AI Keys detected</p>
+                      <p className="text-xs text-amber-300 font-semibold">No Hugging Face Token detected</p>
                       <p className="text-[11px] text-amber-400/80 mt-0.5 leading-relaxed">
-                        Scraping will run, but LLM analysis will be skipped. Configure your Gemini API Key or Hugging Face Token in the top-right button to enable AI insights.
+                        Scraping will run, but AI analysis will be skipped. Configure your Hugging Face Token in the top-right button to enable AI insights.
                       </p>
                     </div>
                   </div>
@@ -1621,10 +1516,7 @@ function HomeContent() {
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-emerald-400" />
                       <span>
-                        AI Engine Ready: {geminiApiKey || hasEnvApiKey ? 'Gemini ' : ''}
-                        {(geminiApiKey || hasEnvApiKey) && (hfApiKey || hasEnvHfKey) ? '& ' : ''}
-                        {hfApiKey || hasEnvHfKey ? 'Hugging Face ' : ''}
-                        Active
+                        Hugging Face AI Engine Active ({aiModel})
                       </span>
                     </div>
                     <button

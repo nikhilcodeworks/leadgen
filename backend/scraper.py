@@ -67,8 +67,6 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 import pandas as pd
 from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
 
 
 class LeadAnalysis(BaseModel):
@@ -561,32 +559,9 @@ def parse_location_from_address(address, query=""):
     return city, zone, locality
 
 
-def get_gemini_model_name(client, requested_model=None):
-    """
-    Dynamically finds the best available Gemini Flash model on the current account.
-    Prefers rock-solid production models (gemini-flash-latest, 3.x, 2.0) to avoid 404 / 503 errors.
-    """
-    if requested_model and requested_model != "auto" and "gemini" in requested_model.lower():
-        if "2.5-flash" in requested_model:
-            return "gemini-flash-latest"
-        return requested_model
-    try:
-        models = [m.name for m in client.models.list()]
-        for preferred in ["gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.0-flash"]:
-            for m in models:
-                if preferred in m:
-                    return m
-        for m in models:
-            if "flash" in m.lower():
-                return m
-    except Exception:
-        pass
-    return "gemini-flash-latest"
-
-
 def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=None):
     """
-    Calls the Hugging Face Router or Serverless Inference API for chat completions.
+    Calls Hugging Face Router or Serverless Inference API for chat completions.
     Parses and returns structured JSON conforming to LeadAnalysis schema.
     """
     if not hf_token:
@@ -594,7 +569,7 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
         
     headers = {"Content-Type": "application/json"}
     if hf_token:
-        headers["Authorization"] = f"Bearer {hf_token}"
+        headers["Authorization"] = f"Bearer {hf_token.strip()}"
         
     system_instruction = (
         "You are an expert lead generation analyst. Analyse the business listing and evaluate lead potential. "
@@ -609,7 +584,7 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
         "facebook (string), contact_person (string), "
         "problem_found (string), problem_evidence (string), recommended_service (string), "
         "pitch_angle (string), lead_score (integer from 0 to 100), "
-        "lead_tier (one of: 'Tier 1 (High)', 'Tier 2 (Medium)', 'Tier 3 (Low)')."
+        "lead_tier (one of: '🔥 Hot', '🟢 Good', '🟡 Medium', '❌ Skip')."
     )
     
     payload = {
@@ -622,16 +597,16 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
         "max_tokens": 1024
     }
     
-    # Try the new HF Router first, then the legacy serverless inference endpoint
     endpoints = [
         "https://router.huggingface.co/hf-inference/v1/chat/completions",
+        f"https://api-inference.huggingface.co/models/{model_name}/v1/chat/completions",
         "https://api-inference.huggingface.co/v1/chat/completions"
     ]
     
     last_error = None
     for endpoint in endpoints:
         try:
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30.0)
+            resp = requests.post(endpoint, headers=headers, json=payload, timeout=35.0)
             if resp.status_code == 200:
                 result_json = resp.json()
                 content = result_json["choices"][0]["message"]["content"].strip()
@@ -652,85 +627,41 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
     raise RuntimeError(f"Hugging Face call failed: {last_error}")
 
 
-def analyze_lead_with_fallback(record, provider="auto", requested_model=None, gemini_client=None, hf_token=None, enable_fallback=True):
+def analyze_lead_with_fallback(record, provider="huggingface", requested_model=None, gemini_client=None, hf_token=None, enable_fallback=True):
     """
-    Evaluates a single lead with the selected model and provider.
-    If the primary model hits 503 UNAVAILABLE, 429 Rate Limit, or fails,
-    it automatically falls back to alternative models so analysis never breaks.
+    Evaluates a single lead using Hugging Face models.
+    Automatically cascades through top open-weights models if primary encounters errors.
     """
     prompt = f"Analyse the following raw text content of a business listing from Google Maps:\n\n{record.get('full_text', '')}\n\nExtract all valuable details and evaluate the potential of this lead."
     
-    attempts = []
-    has_gemini = bool(gemini_client and os.environ.get("GEMINI_API_KEY"))
-    has_hf = bool(hf_token or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN"))
+    primary_model = requested_model if (requested_model and requested_model != "auto") else "Qwen/Qwen2.5-72B-Instruct"
     
-    if requested_model and "2.5-flash" in requested_model:
-        requested_model = "gemini-flash-latest"
-
-    if provider == "huggingface":
-        primary_model = requested_model or "Qwen/Qwen2.5-72B-Instruct"
-        attempts.append(("huggingface", primary_model))
-        if enable_fallback:
-            for alt in ["meta-llama/Llama-3.3-70B-Instruct", "mistralai/Mistral-7B-Instruct-v0.3"]:
-                if alt != primary_model:
-                    attempts.append(("huggingface", alt))
-            if has_gemini:
-                attempts.append(("gemini", "gemini-flash-latest"))
-    elif provider == "gemini":
-        primary_model = requested_model or get_gemini_model_name(gemini_client)
-        attempts.append(("gemini", primary_model))
-        if enable_fallback:
-            for alt in ["gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.0-flash"]:
-                if alt not in [primary_model, f"models/{primary_model}"]:
-                    attempts.append(("gemini", alt))
-            if has_hf:
-                attempts.append(("huggingface", "Qwen/Qwen2.5-72B-Instruct"))
-    else:  # auto
-        if has_gemini:
-            primary_model = requested_model or get_gemini_model_name(gemini_client)
-            attempts.append(("gemini", primary_model))
-            if enable_fallback:
-                for alt in ["gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.0-flash"]:
-                    if alt not in [primary_model, f"models/{primary_model}"]:
-                        attempts.append(("gemini", alt))
-        if has_hf:
-            attempts.append(("huggingface", "Qwen/Qwen2.5-72B-Instruct"))
-            if enable_fallback:
-                attempts.append(("huggingface", "meta-llama/Llama-3.3-70B-Instruct"))
-        if not attempts:
-            if has_gemini:
-                attempts.append(("gemini", "gemini-flash-latest"))
-            elif has_hf:
-                attempts.append(("huggingface", "Qwen/Qwen2.5-72B-Instruct"))
-
-    for p_type, m_name in attempts:
+    model_queue = [primary_model]
+    if enable_fallback:
+        fallback_models = [
+            "meta-llama/Llama-3.3-70B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "Qwen/Qwen2.5-Coder-32B-Instruct"
+        ]
+        for m in fallback_models:
+            if m != primary_model:
+                model_queue.append(m)
+                
+    for m_name in model_queue:
         try:
-            if p_type == "gemini" and gemini_client:
-                time.sleep(0.5)
-                response = gemini_client.models.generate_content(
-                    model=m_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction="analyse leads get valuable data and create insights",
-                        response_mime_type="application/json",
-                        response_schema=LeadAnalysis
-                    )
-                )
-                res_data = json.loads(response.text)
-                return res_data, f"Gemini ({m_name})"
-            elif p_type == "huggingface":
-                time.sleep(0.5)
-                res_data = query_huggingface(prompt, model_name=m_name, hf_token=hf_token)
-                return res_data, f"HF ({m_name})"
+            time.sleep(0.5)
+            res_data = query_huggingface(prompt, model_name=m_name, hf_token=hf_token)
+            return res_data, f"HF ({m_name})"
         except Exception as e:
             err_msg = str(e)
-            print(f"  -> Model {m_name} ({p_type}) encountered issue: {err_msg[:110]}...")
+            print(f"  -> Model {m_name} encountered issue: {err_msg[:120]}...")
             if not enable_fallback:
                 raise e
-            print(f"     [Auto-Fallback] Dynamically switching to fallback model...")
+            print(f"     [Auto-Fallback] Switching to next Hugging Face model...")
             continue
             
-    raise RuntimeError("All configured AI models (Gemini & Hugging Face) failed or were unavailable.")
+    raise RuntimeError("All configured Hugging Face AI models failed or were unavailable.")
+
 
 
 def find_existing_query_file(query, leadsdata_dir="leadsdata"):
@@ -783,7 +714,7 @@ def load_existing_identifiers(excel_path):
     return existing
 
 
-def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="auto", model=None, hf_token=None, enable_fallback=True):
+def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True):
     """
     Reads all raw scraped batch files in 'data/', evaluates them using Gemini / Hugging Face LLM,
     appends the results to 'data/final.txt', converts 'final.txt' to a sorted Excel
@@ -831,29 +762,14 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="auto
         
     print(f"\n--- Starting Lead Analysis Phase on {len(t_files)} batch files ---")
     
-    # Check for API keys
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    # Check for Hugging Face API key
     huggingface_key = hf_token or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN")
-    
-    client = None
-    if gemini_key:
-        try:
-            client = genai.Client()
-        except Exception as e:
-            print(f"GenAI Client initialization note: {e}")
-            client = None
-            
-    has_ai = bool(client or huggingface_key)
+    has_ai = bool(huggingface_key)
     if has_ai:
-        prov_info = f"Requested Provider: {provider}, Model: {model or 'Auto-Detect'}"
-        avail_list = []
-        if client:
-            avail_list.append("Gemini")
-        if huggingface_key:
-            avail_list.append("Hugging Face")
-        print(f"AI Lead Analyzer initialized ({prov_info} | Available: {', '.join(avail_list)} | Fallback: {enable_fallback})")
+        prov_info = f"Hugging Face Model: {model or 'Qwen/Qwen2.5-72B-Instruct'}"
+        print(f"Hugging Face AI Lead Analyzer initialized ({prov_info} | Fallback: {enable_fallback})")
     else:
-        print("Running in offline mode (No Gemini Key or Hugging Face Token found). AI analysis skipped.")
+        print("Running in offline mode (No Hugging Face Token found). AI analysis skipped.")
         
     all_analyzed_records = []
     final_txt_path = os.path.join(data_dir, "final.txt")
@@ -949,9 +865,8 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="auto
                                 try:
                                     res_data, used_model_tag = analyze_lead_with_fallback(
                                         record,
-                                        provider=provider,
+                                        provider="huggingface",
                                         requested_model=model,
-                                        gemini_client=client,
                                         hf_token=huggingface_key,
                                         enable_fallback=enable_fallback
                                     )
@@ -1392,7 +1307,7 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="auto
         )
 
 
-def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True, provider="auto", model=None, hf_token=None, enable_fallback=True):
+def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True):
     """
     Main function to run the scraping workflow.
     """
@@ -1412,9 +1327,12 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
     with sync_playwright() as p:
         # Headed mode is recommended for stealth, but headless can be passed
         print("Launching browser...")
+        if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+            headless = True
         browser = p.chromium.launch(headless=headless, args=[
             "--disable-blink-features=AutomationControlled",
-            "--no-sandbox"
+            "--no-sandbox",
+            "--disable-dev-shm-usage"
         ])
         
         # Create a new browser context with standard viewport and user agent
@@ -2009,15 +1927,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--provider",
         type=str,
-        default="auto",
-        choices=["auto", "gemini", "huggingface"],
-        help="AI Provider for lead evaluation ('auto', 'gemini', 'huggingface')"
+        default="huggingface",
+        choices=["huggingface"],
+        help="AI Provider for lead evaluation (default: 'huggingface')"
     )
     parser.add_argument(
         "--model",
         type=str,
-        default=None,
-        help="Specific model name (e.g. 'gemini-2.5-flash' or 'Qwen/Qwen2.5-72B-Instruct')"
+        default="Qwen/Qwen2.5-72B-Instruct",
+        help="Specific Hugging Face model (e.g. 'Qwen/Qwen2.5-72B-Instruct' or 'meta-llama/Llama-3.3-70B-Instruct')"
     )
     parser.add_argument(
         "--hf-token",

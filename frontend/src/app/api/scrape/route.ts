@@ -22,6 +22,23 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Query is required' }, { status: 400 });
     }
 
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (backendUrl) {
+      try {
+        const cleanBackend = backendUrl.replace(/\/+$/, '');
+        const remoteRes = await fetch(`${cleanBackend}/api/scrape`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const remoteData = await remoteRes.json();
+        return Response.json(remoteData, { status: remoteRes.status });
+      } catch (fErr: any) {
+        console.error('Error proxying to BACKEND_URL:', fErr);
+        return Response.json({ error: `Remote Colab Backend Error: ${fErr.message}` }, { status: 502 });
+      }
+    }
+
     const jobId = `job_${Date.now()}`;
     const backendDir = path.join(process.cwd(), '../backend');
     const statusFile = path.join(backendDir, 'leadsdata/status.json');
@@ -48,8 +65,8 @@ export async function POST(req: NextRequest) {
       total: limit || 100,
       progress: 0,
       status_message: 'Initializing scraper process...',
-      provider: ai_provider || 'auto',
-      model: ai_model || 'auto',
+      provider: 'huggingface',
+      model: ai_model || 'Qwen/Qwen2.5-72B-Instruct',
       timestamp: new Date().toISOString()
     };
     fs.writeFileSync(statusFile, JSON.stringify(statusData, null, 2), 'utf-8');
@@ -84,9 +101,7 @@ export async function POST(req: NextRequest) {
     if (merge_existing === false) {
       args.push('--no-merge');
     }
-    if (ai_provider) {
-      args.push('--provider', ai_provider);
-    }
+    args.push('--provider', 'huggingface');
     if (ai_model) {
       args.push('--model', ai_model);
     }
@@ -99,11 +114,6 @@ export async function POST(req: NextRequest) {
       PYTHONUNBUFFERED: '1',
       PYTHONIOENCODING: 'utf-8'
     };
-    if (gemini_api_key) {
-      env.GEMINI_API_KEY = gemini_api_key;
-    } else if (process.env.GEMINI_API_KEY) {
-      env.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-    }
     if (hf_api_key) {
       env.HUGGINGFACE_API_KEY = hf_api_key;
       env.HF_TOKEN = hf_api_key;

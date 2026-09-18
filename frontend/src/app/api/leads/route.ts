@@ -5,6 +5,32 @@ import * as xlsx from 'xlsx';
 
 export async function GET(req: NextRequest) {
   try {
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (backendUrl) {
+      try {
+        const cleanBackend = backendUrl.replace(/\/+$/, '');
+        const targetUrl = new URL(`${cleanBackend}/api/leads`);
+        targetUrl.search = new URL(req.url).search;
+        const remoteRes = await fetch(targetUrl.toString());
+        const contentType = remoteRes.headers.get('content-type') || 'application/json';
+        if (contentType.includes('application/json')) {
+          const remoteData = await remoteRes.json();
+          return Response.json(remoteData, { status: remoteRes.status });
+        }
+        const blob = await remoteRes.blob();
+        return new Response(blob, {
+          status: remoteRes.status,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': remoteRes.headers.get('content-disposition') || ''
+          }
+        });
+      } catch (fErr: any) {
+        console.error('Error proxying GET /api/leads to BACKEND_URL:', fErr);
+        return Response.json({ error: `Remote Backend Error: ${fErr.message}` }, { status: 502 });
+      }
+    }
+
     const { searchParams } = new URL(req.url);
     const file = searchParams.get('file');
     const download = searchParams.get('download');
@@ -262,11 +288,10 @@ export async function GET(req: NextRequest) {
     // Sort: newest first
     runsList.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    // Check if Gemini or Hugging Face API keys are configured in environment or .env files
-    let hasEnvApiKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim());
+    // Check if Hugging Face API key is configured in environment or .env files
     let hasEnvHfKey = Boolean((process.env.HUGGINGFACE_API_KEY && process.env.HUGGINGFACE_API_KEY.trim()) || (process.env.HF_TOKEN && process.env.HF_TOKEN.trim()));
 
-    if (!hasEnvApiKey || !hasEnvHfKey) {
+    if (!hasEnvHfKey) {
       for (const envPath of [
         path.join(backendDir, '.env'),
         path.join(process.cwd(), '../.env'),
@@ -275,9 +300,6 @@ export async function GET(req: NextRequest) {
         if (fs.existsSync(envPath)) {
           try {
             const content = fs.readFileSync(envPath, 'utf-8');
-            if (!hasEnvApiKey && /GEMINI_API_KEY=([^\s#]+)/.test(content)) {
-              hasEnvApiKey = true;
-            }
             if (!hasEnvHfKey && /(?:HUGGINGFACE_API_KEY|HF_TOKEN)=([^\s#]+)/.test(content)) {
               hasEnvHfKey = true;
             }
@@ -286,7 +308,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return Response.json({ runs: runsList, hasEnvApiKey, hasEnvHfKey });
+    return Response.json({ runs: runsList, hasEnvHfKey, hasEnvApiKey: hasEnvHfKey });
   } catch (error: any) {
     console.error('Error listing leads:', error);
     return Response.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
@@ -295,6 +317,20 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (backendUrl) {
+      try {
+        const cleanBackend = backendUrl.replace(/\/+$/, '');
+        const targetUrl = new URL(`${cleanBackend}/api/leads`);
+        targetUrl.search = new URL(req.url).search;
+        const remoteRes = await fetch(targetUrl.toString(), { method: 'DELETE' });
+        const remoteData = await remoteRes.json();
+        return Response.json(remoteData, { status: remoteRes.status });
+      } catch (fErr: any) {
+        return Response.json({ error: fErr.message }, { status: 502 });
+      }
+    }
+
     const { searchParams } = new URL(req.url);
     const file = searchParams.get('file');
     const jobId = searchParams.get('jobId');
@@ -377,6 +413,22 @@ export async function DELETE(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
+    const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (backendUrl) {
+      try {
+        const cleanBackend = backendUrl.replace(/\/+$/, '');
+        const remoteRes = await fetch(`${cleanBackend}/api/leads`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const remoteData = await remoteRes.json();
+        return Response.json(remoteData, { status: remoteRes.status });
+      } catch (fErr: any) {
+        return Response.json({ error: fErr.message }, { status: 502 });
+      }
+    }
+
     const { file, leadId, updates } = body;
 
     if (!file || !leadId || !updates) {

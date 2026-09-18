@@ -1,18 +1,1 @@
-{
-  "job_1789400773706": {
-    "query": "real state agents in dwarka ,delhi",
-    "limit": 5,
-    "status": "completed",
-    "stage": "completed",
-    "current": 5,
-    "total": 5,
-    "progress": 100,
-    "status_message": "Completed! Scraped & compiled 5 leads successfully.",
-    "provider": "huggingface",
-    "model": "gemini-flash-latest",
-    "timestamp": "2026-09-14T15:46:13.708Z",
-    "pid": 8720,
-    "filename": "real_state_agents_in_dwarka__delhi_job_1789400773706.xlsx",
-    "completed_at": "2026-09-14T15:48:10Z"
-  }
-}
+{}
