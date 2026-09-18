@@ -133,17 +133,23 @@ export async function POST(req: NextRequest) {
     let rawGemini = (body.geminiApiKey || '').trim();
     const testOnly = Boolean(body.testOnly);
 
-    // If no keys provided in payload, fallback to env keys to test
-    if (!rawHf && !rawGemini && fs.existsSync(ENV_FILE_PATH)) {
+    // Fallback to env keys independently if not provided in request body
+    if (!rawHf && fs.existsSync(ENV_FILE_PATH)) {
       try {
         const content = fs.readFileSync(ENV_FILE_PATH, 'utf-8');
         const hfMatch = content.match(/(?:HUGGINGFACE_API_KEY|HF_TOKEN)\s*=\s*["']?([^"'\r\n]+)["']?/);
         if (hfMatch) rawHf = hfMatch[1].trim();
+      } catch (e) {}
+    }
+    if (!rawHf) rawHf = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN || '';
+
+    if (!rawGemini && fs.existsSync(ENV_FILE_PATH)) {
+      try {
+        const content = fs.readFileSync(ENV_FILE_PATH, 'utf-8');
         const geminiMatch = content.match(/GEMINI_API_KEY\s*=\s*["']?([^"'\r\n]+)["']?/);
         if (geminiMatch) rawGemini = geminiMatch[1].trim();
       } catch (e) {}
     }
-    if (!rawHf) rawHf = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN || '';
     if (!rawGemini) rawGemini = process.env.GEMINI_API_KEY || '';
 
     const cleanUrl = rawUrl.replace(/\/+$/, '');
@@ -155,22 +161,24 @@ export async function POST(req: NextRequest) {
       rawGemini ? testGeminiKey(rawGemini) : Promise.resolve({ ok: false, message: 'No Gemini key entered' })
     ]);
 
-    const hasValidAi = (rawHf && hfResult.ok) || (rawGemini && geminiResult.ok);
+    const hasValidAi = (hfResult && hfResult.ok) || (geminiResult && geminiResult.ok);
     const isReady = backendResult.ok && Boolean(hasValidAi);
 
     let readyMessage = '';
     if (isReady) {
-      const aiInfo = hfResult.ok ? `Hugging Face AI (${hfResult.username ? `@${hfResult.username}` : 'Verified'})` : 'Gemini AI Verified';
+      const aiInfo = hfResult.ok 
+        ? `Hugging Face AI (@${hfResult.username || 'active'})`
+        : 'Google Gemini AI';
       const backendInfo = cleanUrl ? 'Colab 12GB Cloud' : 'Local PC';
       readyMessage = `🎉 READY TO SCRAPE! Backend (${backendInfo}) & AI (${aiInfo}) verified!`;
     } else if (!backendResult.ok) {
       readyMessage = `❌ Backend Error: ${backendResult.message}`;
-    } else if (rawHf && !hfResult.ok) {
+    } else if (rawHf && !hfResult.ok && (!rawGemini || !geminiResult.ok)) {
       readyMessage = `❌ AI Token Error: ${hfResult.message}`;
     } else if (rawGemini && !geminiResult.ok) {
       readyMessage = `❌ Gemini Key Error: ${geminiResult.message}`;
     } else {
-      readyMessage = '⚠️ Action Needed: Please enter a Hugging Face Token or Gemini Key to enable AI enrichment.';
+      readyMessage = '⚠️ Action Needed: Please enter a valid Hugging Face Token or Google Gemini API Key.';
     }
 
     if (testOnly) {

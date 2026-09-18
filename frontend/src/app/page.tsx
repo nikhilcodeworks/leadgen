@@ -2521,33 +2521,45 @@ function HomeContent() {
               </div>
 
               {/* Section 2: AI Enrichment Key */}
-              <div className="border-t border-slate-800/80 pt-4">
-                <div className="flex items-center justify-between mb-2">
+              <div className="border-t border-slate-800/80 pt-4 space-y-4">
+                <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
                     <Key className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>2. AI API Token (Hugging Face / Gemini)</span>
+                    <span>2. AI API Key (Hugging Face or Google Gemini)</span>
                   </label>
-                  {(hfApiKey || hasEnvHfKey) && (
+                  {(hfApiKey || geminiApiKey || hasEnvHfKey || hasEnvApiKey) && (
                     <span className="text-[10px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Token Active
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> AI Configured
                     </span>
                   )}
                 </div>
 
-                <div className="space-y-2">
+                {/* Hugging Face Token Input */}
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold text-slate-300">
                       Hugging Face Token (HF_TOKEN)
                     </span>
-                    <a
-                      href="https://huggingface.co/settings/tokens"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 underline"
-                    >
-                      <span>Get Free Token</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
+                    <div className="flex items-center gap-2">
+                      {hfApiKey && (
+                        <button
+                          type="button"
+                          onClick={() => setHfApiKey('')}
+                          className="text-[10px] text-rose-400 hover:text-rose-300 underline"
+                        >
+                          Clear Token
+                        </button>
+                      )}
+                      <a
+                        href="https://huggingface.co/settings/tokens"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 underline"
+                      >
+                        <span>Get Free Token</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </div>
                   </div>
                   <input
                     type="password"
@@ -2557,30 +2569,32 @@ function HomeContent() {
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono transition-colors"
                   />
                   <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Free Hugging Face token powers high-tier Qwen 2.5 72B & Llama 3.3 for lead enrichment & classification.
+                    Used for Qwen 2.5 72B & Llama 3.3 models.
                   </p>
                 </div>
 
-                {/* Optional Gemini Key field */}
-                <div className="mt-3 pt-2">
-                  <details className="text-xs text-slate-400 group">
-                    <summary className="cursor-pointer text-[11px] font-semibold text-slate-400 hover:text-slate-300 list-none flex items-center gap-1.5">
-                      <span className="transition-transform group-open:rotate-90">▸</span>
-                      <span>Optional: Google Gemini API Key</span>
-                    </summary>
-                    <div className="mt-2 space-y-1 pl-3 border-l border-slate-800">
-                      <input
-                        type="password"
-                        placeholder="AIzaSy..."
-                        value={geminiApiKey}
-                        onChange={e => setGeminiApiKey(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-                      />
-                      <p className="text-[10px] text-slate-500">
-                        Optional fallback key if Hugging Face rate limits are reached.
-                      </p>
-                    </div>
-                  </details>
+                {/* Google Gemini API Key Input (Always accessible) */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-800/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-slate-300">
+                      Google Gemini API Key (Alternative AI)
+                    </span>
+                    {hasEnvApiKey && (
+                      <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> Detected in backend
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="password"
+                    placeholder="AQ.Ab8RN... or AIzaSy..."
+                    value={geminiApiKey}
+                    onChange={e => setGeminiApiKey(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 font-mono transition-colors"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Powers Gemini LLM analysis. You can use either Hugging Face or Gemini.
+                  </p>
                 </div>
               </div>
 
