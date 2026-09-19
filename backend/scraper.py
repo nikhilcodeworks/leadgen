@@ -1529,17 +1529,20 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
 
         # Fallback if direct URL didn't render feed: type into search box
         if not feed_found and not details_found:
-            search_box = search_page.locator('input#searchboxinput, input[name="q"]').first
-            if search_box.count() > 0 and search_box.is_visible():
+            search_box = search_page.locator('input#searchboxinput, input[name="q"], input#ucc-1').first
+            if search_box.count() > 0:
                 print(f"Fallback: Typing query into search box: '{safe_query}'")
-                search_box.click()
-                search_box.fill(query)
-                search_page.keyboard.press("Enter")
-                for _ in range(30):
-                    if search_page.locator('div[role="feed"]').count() > 0 or search_page.locator('.Nv2PK').count() > 0:
-                        feed_found = True
-                        break
-                    time.sleep(0.5)
+                try:
+                    search_box.click(timeout=5000, force=True)
+                    search_box.fill(query, timeout=5000)
+                    search_page.keyboard.press("Enter")
+                    for _ in range(30):
+                        if search_page.locator('div[role="feed"]').count() > 0 or search_page.locator('.Nv2PK').count() > 0:
+                            feed_found = True
+                            break
+                        time.sleep(0.5)
+                except Exception as sb_err:
+                    print(f"Notice: Search box fallback attempt: {sb_err}")
             
         if not feed_found and not details_found:
             print("Error: Could not find results feed or place details panel. The search might have returned no results.")
