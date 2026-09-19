@@ -238,6 +238,12 @@ function HomeContent() {
 
   // Scraper Input State
   const [query, setQuery] = useState('');
+  const [optimizingQuery, setOptimizingQuery] = useState(false);
+  const [optimizedAreaInfo, setOptimizedAreaInfo] = useState<{
+    target_area?: string;
+    optimized_query?: string;
+    method?: string;
+  } | null>(null);
   const [limit, setLimit] = useState(50);
   const [isCustomLimit, setIsCustomLimit] = useState(false);
   const [customLimitInput, setCustomLimitInput] = useState('5');
@@ -580,6 +586,39 @@ function HomeContent() {
     setCopiedHookIdx(idx);
     showToast('Copied personalized hook to clipboard!', 'success');
     setTimeout(() => setCopiedHookIdx(null), 2500);
+  };
+
+  // AI Search Query Optimizer
+  const handleOptimizeQuery = async () => {
+    const raw = query.trim();
+    if (!raw) {
+      showToast('Please enter a query first to optimize with AI', 'info');
+      return;
+    }
+    setOptimizingQuery(true);
+    try {
+      const res = await fetch('/api/optimize-query', {
+        method: 'POST',
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          query: raw,
+          hf_api_key: hfApiKey || null,
+          backend_url: backendUrl || null
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.data?.optimized_query) {
+        setQuery(data.data.optimized_query);
+        setOptimizedAreaInfo(data.data);
+        showToast(`✨ Query Optimized: "${data.data.optimized_query}"`, 'success');
+      } else {
+        showToast(data.error || 'Could not optimize query further', 'info');
+      }
+    } catch (err: any) {
+      showToast(`Optimization error: ${err.message}`, 'error');
+    } finally {
+      setOptimizingQuery(false);
+    }
   };
 
   // Handle Form Scrape Submit
@@ -1907,23 +1946,49 @@ function HomeContent() {
                       )}
                     </div>
 
-                    {/* Search query input */}
+                    {/* Search query input with AI Query Optimizer */}
                     <div className="flex flex-col gap-2">
-                      <label htmlFor="query" className="text-sm font-semibold text-slate-300">
-                        Google Maps Search Query
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label htmlFor="query" className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                          <span>Google Maps Search Query</span>
+                          <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/40 text-indigo-400">
+                            LLM Enhanced
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleOptimizeQuery}
+                          disabled={optimizingQuery || !query.trim()}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/40 disabled:opacity-40 transition-all cursor-pointer shadow-sm"
+                          title="Click to automatically analyze locality, city bounds, and optimize query syntax for Google Maps"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 ${optimizingQuery ? 'animate-spin text-indigo-300' : 'text-indigo-400'}`} />
+                          {optimizingQuery ? 'Optimizing...' : '✨ AI Optimize Query'}
+                        </button>
+                      </div>
                       <div className="relative">
                         <input
                           type="text"
                           id="query"
                           required
-                          placeholder="e.g. Dental clinics in South Delhi or Cafes in Seattle"
+                          placeholder="e.g. Luxury real estate developers Vasant Vihar"
                           value={query}
-                          onChange={e => setQuery(e.target.value)}
+                          onChange={e => {
+                            setQuery(e.target.value);
+                            if (optimizedAreaInfo) setOptimizedAreaInfo(null);
+                          }}
                           className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 transition-all pr-10"
                         />
                         <Search className="w-5 h-5 text-slate-600 absolute right-3.5 top-3" />
                       </div>
+                      {optimizedAreaInfo?.target_area && (
+                        <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-3 py-2 rounded-xl animate-in fade-in duration-200">
+                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          <span>
+                            <strong>Target Locality Bound:</strong> {optimizedAreaInfo.target_area} • Scraper will extract every business in this area until Google Maps reaches <em>&quot;End of results&quot;</em>.
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                 <div className="grid grid-cols-2 gap-4">

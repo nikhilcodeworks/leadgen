@@ -734,22 +734,362 @@ def analyze_lead_with_fallback(record, provider="huggingface", requested_model=N
 
 
 
-def find_existing_query_file(query, leadsdata_dir="leadsdata"):
+
+LOCALITY_METRO_MAP = {
+    # Delhi NCR
+    'vasant vihar': ('Vasant Vihar', 'New Delhi'),
+    'vasant kunj': ('Vasant Kunj', 'New Delhi'),
+    'hauz khas': ('Hauz Khas', 'New Delhi'),
+    'saket': ('Saket', 'New Delhi'),
+    'greater kailash': ('Greater Kailash', 'New Delhi'),
+    'gk 1': ('GK 1', 'New Delhi'),
+    'gk 2': ('GK 2', 'New Delhi'),
+    'gk': ('Greater Kailash', 'New Delhi'),
+    'defence colony': ('Defence Colony', 'New Delhi'),
+    'def col': ('Defence Colony', 'New Delhi'),
+    'south extension': ('South Extension', 'New Delhi'),
+    'south ex': ('South Extension', 'New Delhi'),
+    'lajpat nagar': ('Lajpat Nagar', 'New Delhi'),
+    'connaught place': ('Connaught Place', 'New Delhi'),
+    'cp': ('Connaught Place', 'New Delhi'),
+    'chanakyapuri': ('Chanakyapuri', 'New Delhi'),
+    'malviya nagar': ('Malviya Nagar', 'New Delhi'),
+    'green park': ('Green Park', 'New Delhi'),
+    'dwarka': ('Dwarka', 'New Delhi'),
+    'rohini': ('Rohini', 'New Delhi'),
+    'janakpuri': ('Janakpuri', 'New Delhi'),
+    'pitampura': ('Pitampura', 'New Delhi'),
+    'karol bagh': ('Karol Bagh', 'New Delhi'),
+    'rajouri garden': ('Rajouri Garden', 'New Delhi'),
+    'punjabi bagh': ('Punjabi Bagh', 'New Delhi'),
+    'paschim vihar': ('Paschim Vihar', 'New Delhi'),
+    'shahdara': ('Shahdara', 'New Delhi'),
+    'preet vihar': ('Preet Vihar', 'New Delhi'),
+    'mayur vihar': ('Mayur Vihar', 'New Delhi'),
+    'okhla': ('Okhla', 'New Delhi'),
+    'jasola': ('Jasola', 'New Delhi'),
+    'kalkaji': ('Kalkaji', 'New Delhi'),
+    'nehru place': ('Nehru Place', 'New Delhi'),
+    'south delhi': ('South Delhi', 'Delhi'),
+    'north delhi': ('North Delhi', 'Delhi'),
+    'west delhi': ('West Delhi', 'Delhi'),
+    'east delhi': ('East Delhi', 'Delhi'),
+    'central delhi': ('Central Delhi', 'Delhi'),
+    'cyber city': ('DLF Cyber City', 'Gurugram'),
+    'cyber hub': ('DLF Cyber City', 'Gurugram'),
+    'golf course road': ('Golf Course Road', 'Gurugram'),
+    'golf course extension': ('Golf Course Extension Road', 'Gurugram'),
+    'sohna road': ('Sohna Road', 'Gurugram'),
+    'sector 29 gurgaon': ('Sector 29', 'Gurugram'),
+    'sector 29': ('Sector 29', 'Gurugram'),
+    'sector 56 gurgaon': ('Sector 56', 'Gurugram'),
+    'mg road gurgaon': ('MG Road', 'Gurugram'),
+    'gurugram': ('Gurugram', 'Haryana'),
+    'gurgaon': ('Gurugram', 'Haryana'),
+    'noida sector 18': ('Sector 18', 'Noida'),
+    'noida sector 62': ('Sector 62', 'Noida'),
+    'sector 18 noida': ('Sector 18', 'Noida'),
+    'sector 62 noida': ('Sector 62', 'Noida'),
+    'noida': ('Noida', 'Uttar Pradesh'),
+    'greater noida': ('Greater Noida', 'Uttar Pradesh'),
+    'faridabad': ('Faridabad', 'Haryana'),
+    'indirapuram': ('Indirapuram', 'Ghaziabad'),
+    # Mumbai & MMR
+    'bandra west': ('Bandra West', 'Mumbai'),
+    'bandra east': ('Bandra East', 'Mumbai'),
+    'bandra': ('Bandra', 'Mumbai'),
+    'andheri west': ('Andheri West', 'Mumbai'),
+    'andheri east': ('Andheri East', 'Mumbai'),
+    'andheri': ('Andheri', 'Mumbai'),
+    'juhu': ('Juhu', 'Mumbai'),
+    'bandra kurla complex': ('Bandra Kurla Complex', 'Mumbai'),
+    'bkc': ('Bandra Kurla Complex', 'Mumbai'),
+    'powai': ('Powai', 'Mumbai'),
+    'worli': ('Worli', 'Mumbai'),
+    'colaba': ('Colaba', 'Mumbai'),
+    'lower parel': ('Lower Parel', 'Mumbai'),
+    'dadar': ('Dadar', 'Mumbai'),
+    'malad': ('Malad', 'Mumbai'),
+    'borivali': ('Borivali', 'Mumbai'),
+    'goregaon': ('Goregaon', 'Mumbai'),
+    'santacruz': ('Santacruz', 'Mumbai'),
+    'santa cruz': ('Santacruz', 'Mumbai'),
+    'khar': ('Khar', 'Mumbai'),
+    'chembur': ('Chembur', 'Mumbai'),
+    'ghatkopar': ('Ghatkopar', 'Mumbai'),
+    'mulund': ('Mulund', 'Mumbai'),
+    'thane': ('Thane', 'Maharashtra'),
+    'navi mumbai': ('Navi Mumbai', 'Maharashtra'),
+    'vashi': ('Vashi', 'Navi Mumbai'),
+    # Bengaluru
+    'koramangala': ('Koramangala', 'Bengaluru'),
+    'indiranagar': ('Indiranagar', 'Bengaluru'),
+    'whitefield': ('Whitefield', 'Bengaluru'),
+    'hsr layout': ('HSR Layout', 'Bengaluru'),
+    'hsr': ('HSR Layout', 'Bengaluru'),
+    'electronic city': ('Electronic City', 'Bengaluru'),
+    'jp nagar': ('JP Nagar', 'Bengaluru'),
+    'jayanagar': ('Jayanagar', 'Bengaluru'),
+    'mg road bangalore': ('MG Road', 'Bengaluru'),
+    'marathahalli': ('Marathahalli', 'Bengaluru'),
+    'bellandur': ('Bellandur', 'Bengaluru'),
+    'sarjapur road': ('Sarjapur Road', 'Bengaluru'),
+    'btm layout': ('BTM Layout', 'Bengaluru'),
+    'hebbal': ('Hebbal', 'Bengaluru'),
+    'yelahanka': ('Yelahanka', 'Bengaluru'),
+    'malleshwaram': ('Malleshwaram', 'Bengaluru'),
+    'rajajinagar': ('Rajajinagar', 'Bengaluru'),
+    'kalyan nagar': ('Kalyan Nagar', 'Bengaluru'),
+    # Hyderabad
+    'hitec city': ('Hitec City', 'Hyderabad'),
+    'gachibowli': ('Gachibowli', 'Hyderabad'),
+    'jubilee hills': ('Jubilee Hills', 'Hyderabad'),
+    'banjara hills': ('Banjara Hills', 'Hyderabad'),
+    'madhapur': ('Madhapur', 'Hyderabad'),
+    'kondapur': ('Kondapur', 'Hyderabad'),
+    'kukatpally': ('Kukatpally', 'Hyderabad'),
+    'begumpet': ('Begumpet', 'Hyderabad'),
+    'financial district': ('Financial District', 'Hyderabad'),
+    # Pune
+    'koregaon park': ('Koregaon Park', 'Pune'),
+    'viman nagar': ('Viman Nagar', 'Pune'),
+    'baner': ('Baner', 'Pune'),
+    'wakad': ('Wakad', 'Pune'),
+    'hinjewadi': ('Hinjewadi', 'Pune'),
+    'kalyani nagar': ('Kalyani Nagar', 'Pune'),
+    'aundh': ('Aundh', 'Pune'),
+    'shivaji nagar': ('Shivaji Nagar', 'Pune'),
+    'kothrud': ('Kothrud', 'Pune'),
+    'magarpatta': ('Magarpatta', 'Pune'),
+    # Kolkata
+    'park street': ('Park Street', 'Kolkata'),
+    'salt lake': ('Salt Lake', 'Kolkata'),
+    'new town': ('New Town', 'Kolkata'),
+    'ballygunge': ('Ballygunge', 'Kolkata'),
+    'alipore': ('Alipore', 'Kolkata'),
+    # Chennai
+    't nagar': ('T Nagar', 'Chennai'),
+    'adyar': ('Adyar', 'Chennai'),
+    'velachery': ('Velachery', 'Chennai'),
+    'anna nagar': ('Anna Nagar', 'Chennai'),
+    'omr': ('OMR', 'Chennai'),
+    'mylapore': ('Mylapore', 'Chennai'),
+    # Ahmedabad
+    'sg highway': ('SG Highway', 'Ahmedabad'),
+    'satellite': ('Satellite', 'Ahmedabad'),
+    'bodakdev': ('Bodakdev', 'Ahmedabad'),
+    'vastrapur': ('Vastrapur', 'Ahmedabad'),
+    'prahlad nagar': ('Prahlad Nagar', 'Ahmedabad'),
+    'navrangpura': ('Navrangpura', 'Ahmedabad'),
+    'sindhu bhavan road': ('Sindhu Bhavan Road', 'Ahmedabad'),
+    # Global Tech / Tier 1 Hubs
+    'manhattan': ('Manhattan', 'New York'),
+    'brooklyn': ('Brooklyn', 'New York'),
+    'soho': ('SoHo', 'New York'),
+    'beverly hills': ('Beverly Hills', 'California'),
+    'mayfair': ('Mayfair', 'London'),
+    'canary wharf': ('Canary Wharf', 'London')
+}
+
+
+def optimize_search_query_with_llm(raw_query: str, hf_token: str = None) -> dict:
+    """
+    Intelligently analyzes and optimizes a user's search query for Google Maps local business indexing.
+    - If user provides: 'Luxury real estate developers Vasant Vihar'
+    - Identifies niche: 'Luxury real estate developers'
+    - Identifies target area: 'Vasant Vihar, New Delhi'
+    - Constructs optimal Google Maps query: 'Luxury real estate developers in Vasant Vihar, New Delhi'
+    - Employs Hugging Face LLM (Qwen2.5-72B-Instruct) when token is available with fast 8s timeout,
+      and has a complete deterministic offline heuristic engine fallback.
+    """
+    clean_raw = sanitize_string(raw_query)
+    if not clean_raw:
+        return {
+            "optimized_query": clean_raw,
+            "target_area": "",
+            "niche": clean_raw,
+            "city": "",
+            "locality": "",
+            "method": "empty"
+        }
+
+    token = hf_token or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN")
+    
+    # 1. Try Hugging Face LLM Router if token is present
+    if token:
+        system_prompt = (
+            "You are an expert Google Maps Search Query Optimizer.\n"
+            "Given a user's search query (which may lack prepositions, city context, or proper syntax), "
+            "optimize it for maximum precision on Google Maps.\n"
+            "Rules:\n"
+            "1. Extract the core business category / niche (e.g. 'Luxury real estate developers', 'Dentists', 'Italian restaurants').\n"
+            "2. Extract the specific locality, neighborhood, or area (e.g. 'Vasant Vihar', 'Bandra', 'Koramangala', 'SoHo').\n"
+            "3. If the locality belongs to a well-known metro area (e.g. 'Vasant Vihar' -> 'New Delhi', 'Bandra' -> 'Mumbai'), "
+            "append the metro city.\n"
+            "4. Construct the optimized search query in Google Maps format: '[Category] in [Locality], [Metro City]'.\n"
+            "Return ONLY a clean JSON object with keys: 'optimized_query', 'target_area', 'niche', 'city', 'locality'. "
+            "No markdown or backticks."
+        )
+        payload = {
+            "model": "Qwen/Qwen2.5-72B-Instruct",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Query: {clean_raw}"}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 256
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token.strip()}"
+        }
+        endpoints = [
+            "https://router.huggingface.co/v1/chat/completions",
+            "https://router.huggingface.co/hf-inference/v1/chat/completions",
+            "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/chat/completions"
+        ]
+        for ep in endpoints:
+            try:
+                resp = requests.post(ep, headers=headers, json=payload, timeout=8.0)
+                if resp.status_code == 200:
+                    c = resp.json()["choices"][0]["message"]["content"].strip()
+                    c_clean = re.sub(r'^```(?:json)?\s*', '', c, flags=re.MULTILINE)
+                    c_clean = re.sub(r'```\s*$', '', c_clean, flags=re.MULTILINE).strip()
+                    s = c_clean.find('{')
+                    e = c_clean.rfind('}')
+                    if s != -1 and e != -1:
+                        data = json.loads(c_clean[s:e+1])
+                        if data.get("optimized_query"):
+                            data["method"] = "llm"
+                            data["original_query"] = clean_raw
+                            return data
+            except Exception:
+                pass
+
+    # 2. Comprehensive Deterministic Offline Heuristic Engine Fallback
+    q_lower = clean_raw.lower()
+    for loc_key, (loc_name, city_name) in sorted(LOCALITY_METRO_MAP.items(), key=lambda x: len(x[0]), reverse=True):
+        pattern = r'\b' + re.escape(loc_key) + r'\b'
+        if re.search(pattern, q_lower):
+            niche = re.sub(pattern, '', clean_raw, flags=re.IGNORECASE).strip()
+            # Clean trailing prepositions
+            niche = re.sub(r'\b(in|at|near|of|for)\b\s*$', '', niche, flags=re.IGNORECASE).strip()
+            niche = re.sub(r'^\s*\b(in|at|near|of|for)\b', '', niche, flags=re.IGNORECASE).strip()
+            niche = re.sub(r'\s+', ' ', niche).strip()
+            area = f"{loc_name}, {city_name}"
+            opt_query = f"{niche} in {area}" if niche else area
+            return {
+                "optimized_query": opt_query,
+                "target_area": area,
+                "niche": niche or clean_raw,
+                "city": city_name,
+                "locality": loc_name,
+                "method": "heuristic_locality_match",
+                "original_query": clean_raw
+            }
+
+    # 3. Check for standard 'in ' / 'at ' structure if locality was not in pre-defined table
+    m_prep = re.search(r'^(.*?)\s+\b(in|at|near)\b\s+(.*)$', clean_raw, re.IGNORECASE)
+    if m_prep:
+        niche = m_prep.group(1).strip()
+        loc = m_prep.group(3).strip().title()
+        return {
+            "optimized_query": f"{niche} in {loc}",
+            "target_area": loc,
+            "niche": niche,
+            "city": "",
+            "locality": loc,
+            "method": "heuristic_prep_split",
+            "original_query": clean_raw
+        }
+
+    # 4. Default passthrough
+    return {
+        "optimized_query": clean_raw,
+        "target_area": "",
+        "niche": clean_raw,
+        "city": "",
+        "locality": "",
+        "method": "passthrough",
+        "original_query": clean_raw
+    }
+
+
+def check_end_of_results_reached(search_page) -> tuple:
+    """
+    Detects if Google Maps has reached the true end of results for the queried area:
+    1. Google Maps official end-of-list class/text: 'You've reached the end of the list.' (.HlvSq)
+    2. Google Maps nearby area spillover separator: 'Results for nearby areas'
+    3. Physical scroll bottom of div[role='feed'] with no active loading spinner
+    """
+    try:
+        # Check 1: Google's official end indicator (.HlvSq)
+        end_indicators = search_page.locator('.HlvSq, [class*="HlvSq"]').all()
+        for el in end_indicators:
+            try:
+                if el.is_visible():
+                    txt = el.inner_text().strip()
+                    return True, f"Google Maps indicator: '{txt or 'End of List'}'"
+            except Exception:
+                pass
+
+        # Check 2: Direct text matches anywhere in feed
+        for end_text in ["You've reached the end of the list.", "You've reached the end of the list", "reached the end of the list", "No more results"]:
+            loc = search_page.locator(f'text="{end_text}"').first
+            if loc.count() > 0 and loc.is_visible():
+                return True, f"End-of-results message: '{end_text}'"
+
+        # Check 3: Spillover into nearby/other areas separator (signals target area is exhausted)
+        for spill_text in ["Results for nearby areas", "Results near this area", "Looking for results in other areas", "Outside this area"]:
+            spill = search_page.locator(f'text="{spill_text}"').first
+            if spill.count() > 0 and spill.is_visible():
+                return True, f"Locality boundary reached: '{spill_text}'"
+
+        # Check 4: Check if feed reached absolute bottom without active spinner
+        scroll_status = search_page.evaluate("""() => {
+            const feed = document.querySelector('div[role="feed"]');
+            if (!feed) return { atBottom: false, hasSpinner: false };
+            const atBottom = (feed.scrollTop + feed.clientHeight) >= (feed.scrollHeight - 35);
+            const spinner = !!document.querySelector('.q77wGc, [aria-label*="Loading"], [role="progressbar"]');
+            return { atBottom, hasSpinner };
+        }""")
+        if scroll_status.get("atBottom") and not scroll_status.get("hasSpinner"):
+            return True, "Feed reached physical bottom with no further results"
+    except Exception:
+        pass
+
+    return False, ""
+
+
+def find_existing_query_file(query, leadsdata_dir="leadsdata", alt_query=None):
     """
     Finds an existing Excel sheet for the same normalized query in leadsdata/.
+    Supports fuzzy matching across alternative/optimized query forms.
     Returns the file path if found, else None.
     """
-    if not query or not os.path.exists(leadsdata_dir):
+    if not os.path.exists(leadsdata_dir):
         return None
-    query_slug = re.sub(r'[^a-zA-Z0-9]', '_', query).strip('_').lower()
-    query_slug = re.sub(r'_+', '_', query_slug)
+    queries = [q for q in [query, alt_query] if q]
+    if not queries:
+        return None
     
     for fname in os.listdir(leadsdata_dir):
         if fname.endswith(".xlsx"):
             base_slug = re.sub(r'_job_\d+\.xlsx$', '', fname, flags=re.IGNORECASE)
             base_slug = re.sub(r'_+', '_', base_slug).lower()
-            if query_slug in base_slug or base_slug in query_slug:
-                return os.path.join(leadsdata_dir, fname)
+            base_words = set(w for w in base_slug.split('_') if len(w) > 2 and w not in ['the', 'and', 'for', 'in', 'near'])
+            
+            for q in queries:
+                q_slug = re.sub(r'[^a-zA-Z0-9]', '_', q).strip('_').lower()
+                q_slug = re.sub(r'_+', '_', q_slug)
+                if q_slug in base_slug or base_slug in q_slug:
+                    return os.path.join(leadsdata_dir, fname)
+                    
+                q_words = set(w for w in q_slug.split('_') if len(w) > 2 and w not in ['the', 'and', 'for', 'in', 'near'])
+                if base_words and q_words:
+                    overlap = base_words & q_words
+                    if len(overlap) >= min(len(base_words), len(q_words)) * 0.75 and len(overlap) >= 2:
+                        return os.path.join(leadsdata_dir, fname)
     return None
 
 
@@ -1447,11 +1787,28 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
     (or till the genuine end of Google Maps results), then uses dedicated place detail
     navigation to extract 100% accurate, desync-free business leads qualified for the target offer.
     """
-    safe_query = sanitize_string(query)
+    # 1. AI Query Optimization: Analyze intent, niche, locality, and city bounds
+    opt_info = optimize_search_query_with_llm(query, hf_token=hf_token)
+    optimized_query = opt_info.get("optimized_query", query)
+    target_area = opt_info.get("target_area", "")
+    niche = opt_info.get("niche", query)
+    
+    if optimized_query != query:
+        print(f"\n✨ [AI Query Optimizer Active]")
+        print(f"   Original Raw Query : '{query}'")
+        print(f"   Optimized Search   : '{optimized_query}'")
+        if target_area:
+            print(f"   Target Locality    : '{target_area}'")
+        print(f"   Area Strategy      : Scroll strictly within area bounds until 'End of Results' marker\n")
+        search_query = optimized_query
+    else:
+        search_query = query
+
+    safe_query = sanitize_string(search_query)
     print(f"Starting scraper for query: '{safe_query}' (Limit: {limit}, Headless: {headless}, Merge: {merge})")
     
     # Check for existing database sheet for smart deduplication
-    existing_xlsx = find_existing_query_file(query) if merge else None
+    existing_xlsx = find_existing_query_file(search_query, alt_query=query) if merge else None
     existing_ids = load_existing_identifiers(existing_xlsx) if existing_xlsx else {"phones": set(), "urls": set(), "names": set()}
     if existing_xlsx and len(existing_ids["names"]) > 0:
         print(f"Smart Deduplication Active: Found existing sheet '{os.path.basename(existing_xlsx)}' with {len(existing_ids['names'])} leads.")
@@ -1459,7 +1816,7 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
     else:
         init_msg = "Launching browser with anti-detect stealth..."
         
-    update_job_status(job_id, "active", query=query, limit=limit, progress=2, stage="initializing", status_message=init_msg)
+    update_job_status(job_id, "active", query=search_query, limit=limit, progress=2, stage="initializing", status_message=init_msg)
     
     with sync_playwright() as p:
         print("Launching browser...")
@@ -1492,7 +1849,7 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
         search_page = context.new_page()
         
         # Navigate directly to Google Maps search URL for high speed & reliability
-        direct_search_url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}"
+        direct_search_url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(search_query)}"
         print(f"Navigating to Google Maps search: '{safe_query}'...")
         update_job_status(job_id, "active", progress=5, stage="searching", status_message=f"Connecting to Google Maps for '{safe_query}'...")
         
@@ -1534,7 +1891,7 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
                 print(f"Fallback: Typing query into search box: '{safe_query}'")
                 try:
                     search_box.click(timeout=5000, force=True)
-                    search_box.fill(query, timeout=5000)
+                    search_box.fill(search_query, timeout=5000)
                     search_page.keyboard.press("Enter")
                     for _ in range(30):
                         if search_page.locator('div[role="feed"]').count() > 0 or search_page.locator('.Nv2PK').count() > 0:
@@ -1567,7 +1924,7 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
                 save_batch(records, batch_num)
             browser.close()
             process_and_cleanup_data(
-                job_id=job_id, query=query, merge=merge, provider=provider,
+                job_id=job_id, query=search_query, merge=merge, provider=provider,
                 model=model, hf_token=hf_token, enable_fallback=enable_fallback,
                 service_offer=service_offer, custom_goal=custom_goal
             )
@@ -1653,52 +2010,33 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
                 print(f"Reached discovery target of {total_found} candidate listings (Goal: {limit} leads).")
                 break
 
-            # Check for end of list text or stall
-            end_text_visible = search_page.locator("text=You've reached the end of the list.").count() > 0
-            
+            # Check if Google Maps has reached the genuine end of results for this specific area
+            is_end, end_reason = check_end_of_results_reached(search_page)
+            if is_end:
+                print(f"\n🏁 Google Maps confirmed: Reached 'End of Results' for '{target_area or search_query}' ({end_reason})!")
+                print(f"Total verified local listings collected in this specific area: {total_found}")
+                break
+
             if new_in_pass == 0:
                 no_new_streak += 1
             else:
                 no_new_streak = 0
 
-            # If stalled or reached end of current viewport, trigger Multi-Area Expansion!
-            if (end_text_visible or no_new_streak >= 3) and total_found < target_discovery and area_expansions < 5:
-                print(f"Area saturated at {total_found} listings (Goal: {limit}). Expanding Google Maps search area ({area_expansions + 1}/5)...")
-                
-                # Check for 'Search this area' button
-                search_area_btn = search_page.locator('button:has-text("Search this area"), button[aria-label*="Search this area"]').first
-                if search_area_btn.count() == 0 or not search_area_btn.is_visible():
-                    # Zoom out map by 1 notch to reveal surrounding area
-                    zoom_out_btn = search_page.locator('button#widget-zoomout, button[aria-label="Zoom out"]').first
-                    if zoom_out_btn.count() > 0 and zoom_out_btn.is_visible():
-                        try:
-                            zoom_out_btn.click()
-                            random_delay(1.0, 1.5)
-                        except Exception:
-                            pass
-                    else:
-                        try:
-                            search_page.keyboard.press("-")
-                            random_delay(1.0, 1.5)
-                        except Exception:
-                            pass
+            # If no new listings for multiple passes, check physical feed bottom
+            if no_new_streak >= 3:
+                scroll_info = search_page.evaluate("""() => {
+                    const feed = document.querySelector('div[role="feed"]');
+                    if (!feed) return { atBottom: false };
+                    return {
+                        atBottom: (feed.scrollTop + feed.clientHeight) >= (feed.scrollHeight - 40)
+                    };
+                }""")
+                if scroll_info.get("atBottom", False):
+                    print(f"\n🏁 Reached physical bottom of Google Maps feed with no additional items. End of results confirmed! Total: {total_found}")
+                    break
 
-                search_area_btn = search_page.locator('button:has-text("Search this area"), button[aria-label*="Search this area"]').first
-                if search_area_btn.count() > 0 and search_area_btn.is_visible():
-                    print("Found 'Search this area' button. Triggering search over expanded area...")
-                    try:
-                        search_area_btn.click()
-                        random_delay(2.5, 3.5)
-                        area_expansions += 1
-                        no_new_streak = 0
-                        continue
-                    except Exception:
-                        pass
-                else:
-                    area_expansions += 1
-
-            if no_new_streak >= 6 and (total_found >= limit or area_expansions >= 5):
-                print(f"No further listings available on Google Maps for this query. Proceeding with {total_found} listings.")
+            if no_new_streak >= 6:
+                print(f"\n🏁 No further listings loading from Google Maps for '{target_area or search_query}'. Proceeding with {total_found} listings.")
                 break
 
             # Multi-strategy scroll movement
@@ -1863,7 +2201,7 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
     # Execute post-scrape lead analysis and cleanup
     process_and_cleanup_data(
         job_id=job_id,
-        query=query,
+        query=search_query,
         merge=merge,
         provider=provider,
         model=model,

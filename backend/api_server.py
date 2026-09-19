@@ -237,6 +237,35 @@ async def ai_copilot(req: Request):
     }
 
 
+@app.post("/api/optimize-query")
+async def api_optimize_query(req: Request):
+    """
+    Optimizes a raw search query using LLM / intelligent heuristic engine
+    for Google Maps high-precision area matching.
+    """
+    body = await req.json()
+    raw_query = body.get("query", "").strip()
+    hf_token = body.get("hf_api_key") or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN")
+    
+    if not raw_query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+        
+    try:
+        from scraper import optimize_search_query_with_llm
+        res = optimize_search_query_with_llm(raw_query, hf_token=hf_token)
+        return {"success": True, "data": res}
+    except Exception as e:
+        return {
+            "success": True,
+            "data": {
+                "optimized_query": raw_query,
+                "target_area": "",
+                "niche": raw_query,
+                "error": str(e)
+            }
+        }
+
+
 @app.post("/api/scrape")
 async def start_scrape(req: Request, background_tasks: BackgroundTasks):
     body = await req.json()
