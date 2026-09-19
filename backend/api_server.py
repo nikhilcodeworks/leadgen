@@ -43,6 +43,7 @@ LEADSDATA_DIR = SCRIPT_DIR / "leadsdata"
 STATUS_FILE = LEADSDATA_DIR / "status.json"
 
 LEADSDATA_DIR.mkdir(parents=True, exist_ok=True)
+EXCEL_ROW_COUNT_CACHE = {}
 
 
 def read_status_data() -> dict:
@@ -263,38 +264,80 @@ def get_leads(file: Optional[str] = None, download: Optional[str] = None, format
     # 2. List all runs
     runs = []
     processed_files = set()
+    processed_jobs = set()
+
     for f in sorted(LEADSDATA_DIR.glob("*.xlsx"), key=lambda x: x.stat().st_mtime, reverse=True):
         processed_files.add(f.name)
         stats = f.stat()
+
+        # Count actual rows in sheet (cached by mtime + size for instant polling)
+        row_count = 0
+        cache_key = f.name
+        cached = EXCEL_ROW_COUNT_CACHE.get(cache_key)
+        if cached and cached.get("mtime") == stats.st_mtime and cached.get("size") == stats.st_size:
+            row_count = cached.get("count", 0)
+        else:
+            try:
+                df_temp = pd.read_excel(f, engine="openpyxl")
+                row_count = len(df_temp)
+                EXCEL_ROW_COUNT_CACHE[cache_key] = {
+                    "mtime": stats.st_mtime,
+                    "size": stats.st_size,
+                    "count": row_count
+                }
+            except Exception:
+                row_count = 0
+
+        # Try matching job info from status_data
+        matched_job_id = None
+        m = re.search(r'_(job_\d+)\.xlsx$', f.name)
+        if m:
+            matched_job_id = m.group(1)
+        if not matched_job_id:
+            for j_id, j_info in status_data.items():
+                if j_info.get("filename") == f.name:
+                    matched_job_id = j_id
+                    break
+
+        j_info = status_data.get(matched_job_id, {}) if matched_job_id else {}
+        if matched_job_id:
+            processed_jobs.add(matched_job_id)
+
+        clean_stem = re.sub(r'_job_\d+$', '', f.stem, flags=re.IGNORECASE)
+        query_name = j_info.get("query") or clean_stem.replace("_", " ").title()
+        limit_val = j_info.get("limit", row_count or 100)
+        status_msg = j_info.get("status_message") or (f"{row_count} leads saved" if row_count > 0 else "Ready")
+
         runs.append({
             "filename": f.name,
-            "jobId": f"file_{int(stats.st_mtime)}",
-            "query": f.stem.replace("_", " ").title(),
-            "limit": 100,
+            "jobId": matched_job_id or f"file_{int(stats.st_mtime)}",
+            "query": query_name,
+            "limit": limit_val,
             "status": "completed",
             "stage": "completed",
-            "current": 0,
-            "total": 100,
+            "current": row_count,
+            "total": row_count,
             "progress": 100,
-            "statusMessage": "Ready",
+            "statusMessage": status_msg,
             "size": stats.st_size,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(stats.st_mtime))
+            "timestamp": j_info.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(stats.st_mtime))
         })
 
-    # Append active/status jobs
+    # Append active, failed, or cancelled jobs not matched to a file
     for j_id, j_info in status_data.items():
-        if j_info.get("status") == "active":
+        st = j_info.get("status", "active")
+        if j_id not in processed_jobs and st in ["active", "failed", "cancelled"]:
             runs.insert(0, {
-                "filename": None,
+                "filename": j_info.get("filename"),
                 "jobId": j_id,
                 "query": j_info.get("query", "Unknown Search"),
                 "limit": j_info.get("limit", 100),
-                "status": "active",
-                "stage": j_info.get("stage", "starting"),
+                "status": st,
+                "stage": j_info.get("stage", "failed" if st == "failed" else ("cancelled" if st == "cancelled" else "starting")),
                 "current": j_info.get("current", 0),
-                "total": j_info.get("total", 100),
-                "progress": j_info.get("progress", 0),
-                "statusMessage": j_info.get("status_message", ""),
+                "total": j_info.get("total", j_info.get("limit", 100)),
+                "progress": j_info.get("progress", 0 if st != "completed" else 100),
+                "statusMessage": j_info.get("status_message", f"Job {st}"),
                 "size": 0,
                 "timestamp": j_info.get("timestamp", time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()))
             })
@@ -362,9 +405,16 @@ def delete_lead(file: Optional[str] = None, jobId: Optional[str] = None):
             log_file.unlink(missing_ok=True)
 
     if file:
-        f_path = LEADSDATA_DIR / Path(file).name
+        safe_name = Path(file).name
+        f_path = LEADSDATA_DIR / safe_name
         if f_path.exists():
             f_path.unlink(missing_ok=True)
+        if safe_name in EXCEL_ROW_COUNT_CACHE:
+            del EXCEL_ROW_COUNT_CACHE[safe_name]
+        # Prune any status entries associated with this file
+        keys_to_del = [k for k, v in status_data.items() if v.get("filename") == safe_name]
+        for k in keys_to_del:
+            del status_data[k]
 
     write_status_data(status_data)
     return {"success": True}

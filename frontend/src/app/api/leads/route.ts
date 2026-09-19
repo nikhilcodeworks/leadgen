@@ -245,8 +245,8 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // If completed or failed but NO file exists on disk, it was deleted! Prune it from status.json
-        if (info.status === 'completed' || info.status === 'failed') {
+        // If completed but NO file exists on disk, it was deleted! Prune it from status.json
+        if (info.status === 'completed') {
           if (!matchedFilename) {
             delete statusData[jobId];
             statusNeedsSync = true;

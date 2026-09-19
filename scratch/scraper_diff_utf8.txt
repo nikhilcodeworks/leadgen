@@ -1,0 +1,829 @@
+﻿diff --git a/backend/scraper.py b/backend/scraper.py
+index 6a3c909..d5caee1 100644
+--- a/backend/scraper.py
++++ b/backend/scraper.py
+@@ -251,6 +251,17 @@ def update_job_status(job_id, status, query=None, limit=None, progress=None, sta
+         print(f"Warning: Could not write status to {status_file}: {e}")
+ 
+ 
++def sanitize_string(val):
++    """
++    Safely strips private-use unicode icons (such as \ue0b0, \ue0c8) and extra whitespace
++    to prevent charmap encoding errors on Windows and ensure pristine data.
++    """
++    if not val:
++        return ""
++    cleaned = re.sub(r'[\s\ue000-\uf8ff]+', ' ', str(val))
++    return cleaned.strip()
++
++
+ def save_batch(buffer, batch_num):
+     """
+     Saves the accumulated records to a raw JSON Lines file in the 'data' directory.
+@@ -1304,15 +1315,21 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
+             progress=100, 
+             stage="completed", 
+             status_message=completion_msg,
+-            filename=os.path.basename(master_xlsx_path)
++            filename=os.path.basename(master_xlsx_path),
++            current=len(df),
++            total=len(df)
+         )
+ 
+ 
+ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True):
+     """
+     Main function to run the scraping workflow.
++    Uses multi-strategy infinite scrolling to discover all listings up to `limit`
++    (or till the genuine end of Google Maps results), then uses dedicated place detail
++    navigation to extract 100% accurate, desync-free business leads.
+     """
+-    print(f"Starting scraper for query: '{query}' (Limit: {limit}, Headless: {headless}, Merge: {merge})")
++    safe_query = sanitize_string(query)
++    print(f"Starting scraper for query: '{safe_query}' (Limit: {limit}, Headless: {headless}, Merge: {merge})")
+     
+     # Check for existing database sheet for smart deduplication
+     existing_xlsx = find_existing_query_file(query) if merge else None
+@@ -1326,7 +1343,6 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
+     update_job_status(job_id, "active", query=query, limit=limit, progress=2, stage="initializing", status_message=init_msg)
+     
+     with sync_playwright() as p:
+-        # Headed mode is recommended for stealth, but headless can be passed
+         print("Launching browser...")
+         if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+             headless = True
+@@ -1336,7 +1352,6 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
+             "--disable-dev-shm-usage"
+         ])
+         
+-        # Create a new browser context with standard viewport and user agent
+         context = browser.new_context(
+             viewport={"width": 1280, "height": 800},
+             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+@@ -1355,58 +1370,57 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
+             
+         stealth = Stealth()
+         stealth.apply_stealth_sync(context)
+-        page = context.new_page()
++        search_page = context.new_page()
+         
+-        # Navigate to Google Maps
+-        print("Navigating to Google Maps...")
+-        update_job_status(job_id, "active", progress=5, stage="navigating", status_message=f"Connecting to Google Maps for '{query}'...")
+-        page.goto("https://www.google.com/maps", timeout=60000)
+-        random_delay(2.0, 4.0)
++        # Navigate directly to Google Maps search URL for high speed & reliability
++        direct_search_url = f"https://www.google.com/maps/search/{urllib.parse.quote_plus(query)}"
++        print(f"Navigating to Google Maps search: '{safe_query}'...")
++        update_job_status(job_id, "active", progress=5, stage="searching", status_message=f"Connecting to Google Maps for '{safe_query}'...")
+         
+-        # Handle cookie consent banner if still visible
+-        handle_cookie_consent(page)
+-        
+-        # Perform Search
+-        print(f"Typing query: '{query}'")
+-        update_job_status(job_id, "active", progress=10, stage="searching", status_message=f"Typing search query: '{query}'...")
+-        search_box = page.locator('input#searchboxinput, input[name="q"]').first
+-        search_box.wait_for(state="visible", timeout=10000)
+-        search_box.click()
+-        random_delay(0.5, 1.0)
+-        
+-        # Simulate human typing
+-        search_box.type(query, delay=random.randint(50, 150))
+-        random_delay(0.5, 1.0)
+-        
+-        # Press Enter or click search button
+-        search_box.press("Enter")
+-        print("Search submitted. Waiting for results feed or details panel...")
+-        update_job_status(job_id, "active", progress=12, stage="searching", status_message="Search submitted. Awaiting Google Maps results...")
++        try:
++            search_page.goto(direct_search_url, timeout=60000, wait_until="domcontentloaded")
++        except Exception:
++            search_page.goto(direct_search_url, timeout=60000)
++            
++        random_delay(1.5, 2.5)
++        handle_cookie_consent(search_page)
+         
+-        # Determine if we got a list or a single result redirect
+-        # We wait for either the results feed container (div[role="feed"]) or a details panel (div[role="main"])
+-        results_feed_selector = 'div[role="feed"]'
++        results_feed_selector = 'div[role="feed"], div[aria-label*="Results for"], div.m6QErb.DxyBCb'
+         details_panel_selector = 'div[role="main"][aria-label]'
+         
+-        # Wait up to 15 seconds to see which one appears
+         feed_found = False
+         details_found = False
+         
+-        for _ in range(30):
++        for wait_step in range(40):
+             if is_job_cancelled(job_id):
+                 print(f"\n[Notice] Job {job_id} was cancelled by user. Terminating browser.")
+                 browser.close()
+                 return
+-            if page.locator(results_feed_selector).count() > 0:
++            if search_page.locator('div[role="feed"]').count() > 0:
+                 feed_found = True
+                 break
+-            # If no feed is found, but a details panel is found, check if it's a single result direct redirect.
+-            if page.locator(details_panel_selector).count() > 0:
+-                # In single result redirect, no results feed exists
+-                if page.locator(results_feed_selector).count() == 0:
++            if search_page.locator('.Nv2PK').count() > 0 or search_page.locator('a.hfpxzc').count() > 0:
++                feed_found = True
++                break
++            if search_page.locator(details_panel_selector).count() > 0:
++                if search_page.locator('div[role="feed"]').count() == 0 and search_page.locator('.Nv2PK').count() == 0:
+                     details_found = True
+                     break
+             time.sleep(0.5)
++
++        # Fallback if direct URL didn't render feed: type into search box
++        if not feed_found and not details_found:
++            search_box = search_page.locator('input#searchboxinput, input[name="q"]').first
++            if search_box.count() > 0 and search_box.is_visible():
++                print(f"Fallback: Typing query into search box: '{safe_query}'")
++                search_box.click()
++                search_box.fill(query)
++                search_page.keyboard.press("Enter")
++                for _ in range(30):
++                    if search_page.locator('div[role="feed"]').count() > 0 or search_page.locator('.Nv2PK').count() > 0:
++                        feed_found = True
++                        break
++                    time.sleep(0.5)
+             
+         if not feed_found and not details_found:
+             print("Error: Could not find results feed or place details panel. The search might have returned no results.")
+@@ -1421,287 +1435,315 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
+         # Case A: Redirected directly to a single business details panel
+         if details_found and not feed_found:
+             print("Direct redirect to business details panel detected (single result).")
+-            details_panel = page.locator(details_panel_selector)
+-            
+-            # Scroll details panel to trigger lazy loading
+-            print("Scrolling details panel to load all content...")
++            details_panel = search_page.locator(details_panel_selector).first
+             for _ in range(3):
+-                page.evaluate(
+-                    'const el = document.querySelector(\'div[role="main"][aria-label]\'); if (el) { el.scrollBy(0, 1000); }'
+-                )
+-                random_delay(0.5, 1.0)
+-                
+-            record = extract_details(details_panel, page)
+-            if record:
++                search_page.evaluate('const el = document.querySelector(\'div[role="main"][aria-label]\'); if (el) { el.scrollBy(0, 1000); }')
++                random_delay(0.4, 0.8)
++            record = extract_details(details_panel, search_page)
++            if record and record.get("name"):
+                 records.append(record)
+                 save_batch(records, batch_num)
+             browser.close()
++            process_and_cleanup_data(
++                job_id=job_id, query=query, merge=merge, provider=provider,
++                model=model, hf_token=hf_token, enable_fallback=enable_fallback
++            )
+             return
+-            
++
+         # Case B: Standard feed of multiple results
+-        print("Results feed detected. Starting scroll to load listings...")
+-        
+-        cards_selector = 'div[role="feed"] div[role="article"]'
+-        
+-        # Infinite scroll logic
+-        last_count = 0
+-        no_change_count = 0
+-        max_scroll_attempts = 100
+-        
+-        # Calculate target listings to load: if merging, aim for limit + existing leads
+-        existing_count = len(existing_ids.get("names", [])) if (merge and existing_xlsx) else 0
+-        target_to_load = limit + existing_count
++        print("Results feed detected. Starting deep multi-strategy scroll to discover listings...")
++        feed = search_page.locator('div[role="feed"]').first
+         
++        # Ensure we discover enough candidates to absorb deduplication, ads, and detail loading errors
++        if limit < 9999:
++            target_discovery = min(int(limit * 1.6) + 15, limit + 50)
++        else:
++            target_discovery = 99999
++            
++        print(f"Target discovery goal: {target_discovery} candidate listings (to guarantee {limit} verified leads)...")
++        seen_urls = set()
++        collected_listings = []
++        no_new_streak = 0
++        area_expansions = 0
++        max_scroll_attempts = 150
++
+         for attempt in range(max_scroll_attempts):
+             if is_job_cancelled(job_id):
+                 print(f"\n[Notice] Job {job_id} was cancelled by user. Stopping scraper.")
+                 browser.close()
+                 return
+-            # Scroll down the feed container
+-            page.evaluate(
+-                'const el = document.querySelector(\'div[role="feed"]\'); if (el) { el.scrollBy(0, el.scrollHeight); }'
+-            )
+-            random_delay(1.5, 3.0)
++
++            # Extract currently visible listings in the feed
++            anchors = search_page.locator('div[role="feed"] a.hfpxzc, div[role="feed"] .Nv2PK a[href*="/maps/place/"]')
++            count = anchors.count()
++            new_in_pass = 0
+             
+-            current_count = page.locator(cards_selector).count()
+-            print(f"Scroll attempt {attempt + 1}: Found {current_count} listings.")
+-            scroll_progress = min(19, 12 + int((min(current_count, target_to_load) / max(1, target_to_load)) * 7))
++            for i in range(count):
++                try:
++                    a = anchors.nth(i)
++                    raw_href = a.get_attribute("href")
++                    if not raw_href or "/maps/place/" not in raw_href:
++                        continue
++                    clean_url = raw_href.split('?')[0].rstrip('/')
++                    if clean_url in seen_urls:
++                        continue
++                        
++                    raw_name = a.get_attribute("aria-label") or ""
++                    if not raw_name:
++                        card_parent = a.locator("xpath=..")
++                        title_el = card_parent.locator('.fontHeadlineSmall, [class*="title"], h3').first
++                        if title_el.count() > 0:
++                            raw_name = title_el.inner_text().strip()
++                            
++                    clean_name = sanitize_string(raw_name)
++                    # Deduplicate against existing sheet immediately if merge is active
++                    if clean_name:
++                        name_key = re.sub(r'[^a-zA-Z0-9]', '', clean_name.lower())
++                        if name_key and name_key in existing_ids["names"]:
++                            seen_urls.add(clean_url)
++                            continue
++                            
++                    seen_urls.add(clean_url)
++                    collected_listings.append({
++                        "name": clean_name or f"Listing #{len(collected_listings) + 1}",
++                        "url": clean_url
++                    })
++                    new_in_pass += 1
++                except Exception:
++                    pass
++
++            total_found = len(collected_listings)
++            scroll_progress = min(22, 10 + int((min(total_found, target_discovery) / max(1, target_discovery)) * 12))
+             update_job_status(
+                 job_id,
+                 "active",
+                 progress=scroll_progress,
+                 stage="searching",
+-                current=current_count,
+-                total=target_to_load,
+-                status_message=f"Found {current_count} listings on Google Maps..."
++                current=total_found,
++                total=limit if limit < 9999 else total_found,
++                status_message=f"Discovered {total_found}/{target_discovery} candidates on Google Maps..."
+             )
+-            
+-            # Check for end of list indicator
+-            end_text_visible = page.locator("text=You've reached the end of the list.").count() > 0
+-            if end_text_visible:
+-                print("Reached the end of the list (detected end text).")
+-                break
+-                
+-            if current_count >= target_to_load:
+-                print(f"Reached loading target of {target_to_load} listings ({limit} new + {existing_count} existing).")
++            print(f"Scroll pass {attempt + 1}: Found {total_found} unique listings ({new_in_pass} new this pass).")
++
++            # Check if discovery target is achieved
++            if limit < 9999 and total_found >= target_discovery:
++                print(f"Reached discovery target of {total_found} candidate listings (Goal: {limit} leads).")
+                 break
+-                
+-            if current_count == last_count:
+-                no_change_count += 1
+-                if no_change_count >= 8:
+-                    print("No new results loaded after multiple scroll attempts. Stopping scroll.")
+-                    break
++
++            # Check for end of list text or stall
++            end_text_visible = search_page.locator("text=You've reached the end of the list.").count() > 0
++            
++            if new_in_pass == 0:
++                no_new_streak += 1
+             else:
+-                no_change_count = 0
+-                last_count = current_count
++                no_new_streak = 0
++
++            # If stalled or reached end of current viewport, trigger Multi-Area Expansion!
++            if (end_text_visible or no_new_streak >= 3) and total_found < target_discovery and area_expansions < 5:
++                print(f"Area saturated at {total_found} listings (Goal: {limit}). Expanding Google Maps search area ({area_expansions + 1}/5)...")
+                 
+-        # Begin extracting details until `limit` NEW leads are scraped
+-        records = []
+-        batch_num = 1
++                # Check for 'Search this area' button
++                search_area_btn = search_page.locator('button:has-text("Search this area"), button[aria-label*="Search this area"]').first
++                if search_area_btn.count() == 0 or not search_area_btn.is_visible():
++                    # Zoom out map by 1 notch to reveal surrounding area
++                    zoom_out_btn = search_page.locator('button#widget-zoomout, button[aria-label="Zoom out"]').first
++                    if zoom_out_btn.count() > 0 and zoom_out_btn.is_visible():
++                        try:
++                            zoom_out_btn.click()
++                            random_delay(1.0, 1.5)
++                        except Exception:
++                            pass
++                    else:
++                        try:
++                            search_page.keyboard.press("-")
++                            random_delay(1.0, 1.5)
++                        except Exception:
++                            pass
++
++                search_area_btn = search_page.locator('button:has-text("Search this area"), button[aria-label*="Search this area"]').first
++                if search_area_btn.count() > 0 and search_area_btn.is_visible():
++                    print("Found 'Search this area' button. Triggering search over expanded area...")
++                    try:
++                        search_area_btn.click()
++                        random_delay(2.5, 3.5)
++                        area_expansions += 1
++                        no_new_streak = 0
++                        continue
++                    except Exception:
++                        pass
++                else:
++                    area_expansions += 1
++
++            if no_new_streak >= 6 and (total_found >= limit or area_expansions >= 5):
++                print(f"No further listings available on Google Maps for this query. Proceeding with {total_found} listings.")
++                break
++
++            # Multi-strategy scroll movement
++            try:
++                # 1. Scroll last card into view
++                items = search_page.locator('div[role="feed"] .Nv2PK, div[role="feed"] div[role="article"]')
++                if items.count() > 0:
++                    try:
++                        items.last.scroll_into_view_if_needed(timeout=1500)
++                    except Exception:
++                        pass
++                # 2. Scroll the feed container directly to bottom
++                search_page.evaluate('const el = document.querySelector(\'div[role="feed"]\'); if (el) { el.scrollTop = el.scrollHeight; }')
++                # 3. Mouse wheel over feed
++                feed_box = feed.bounding_box()
++                if feed_box:
++                    search_page.mouse.move(feed_box["x"] + feed_box["width"] / 2, feed_box["y"] + feed_box["height"] / 2)
++                    search_page.mouse.wheel(0, 4500)
++            except Exception:
++                pass
++            random_delay(1.5, 2.5)
++
++        total_discovered = len(collected_listings)
++        print(f"\nDiscovery complete: {total_discovered} unique candidates found.")
++
++        if total_discovered == 0:
++            msg = "No new listings found to extract (all available results may already be in database)."
++            print(msg)
++            if job_id:
++                update_job_status(job_id, "completed", progress=100, status_message=msg)
++            browser.close()
++            return
++
++        target_goal = min(limit, total_discovered) if limit < 9999 else total_discovered
++        print(f"Beginning details extraction to collect {target_goal} verified leads (pool of {total_discovered} candidates)...")
++
++        # Phase 2: High-accuracy details extraction via dedicated detail page
++        detail_page = context.new_page()
+         new_leads_collected = 0
+-        card_index = 0
+         duplicates_skipped = 0
+-        consecutive_scroll_fails = 0
+         
+-        print(f"\nScroll complete. Beginning details extraction (Goal: {limit} new leads)...")
+         update_job_status(
+             job_id,
+             "active",
+-            progress=20,
++            progress=22,
+             stage="scraping",
+             current=0,
+-            total=limit,
+-            status_message=f"Beginning details extraction (Goal: {limit} new leads)..."
++            total=target_goal,
++            status_message=f"Beginning details extraction (Target: {target_goal} leads)..."
+         )
+-        
+-        while new_leads_collected < limit:
++
++        for idx, item in enumerate(collected_listings):
+             if is_job_cancelled(job_id):
+                 print(f"\n[Notice] Job {job_id} was cancelled by user. Halting scraping loop.")
+-                browser.close()
+-                return
+-
+-            total_cards = page.locator(cards_selector).count()
+-            
+-            # If we reached the end of currently loaded cards in DOM, scroll down to load more
+-            if card_index >= total_cards:
+-                print(f"Processed all {total_cards} cards loaded so far ({new_leads_collected}/{limit} new leads collected). Scrolling for more...")
+-                page.evaluate(
+-                    'const el = document.querySelector(\'div[role="feed"]\'); if (el) { el.scrollBy(0, el.scrollHeight); }'
+-                )
+-                random_delay(1.5, 3.0)
+-                new_total = page.locator(cards_selector).count()
+-                if new_total <= total_cards:
+-                    consecutive_scroll_fails += 1
+-                    if consecutive_scroll_fails >= 3:
+-                        print("Reached the end of Google Maps results. No more listings found.")
+-                        break
+-                else:
+-                    consecutive_scroll_fails = 0
+-                    total_cards = new_total
++                break
+ 
+-            if card_index >= total_cards:
++            if new_leads_collected >= target_goal:
++                print(f"\n≡ƒÄë Successfully reached target goal of {target_goal} verified leads!")
+                 break
+ 
+-            print(f"\nProcessing listing card {card_index + 1} (New collected: {new_leads_collected}/{limit}, Dups skipped: {duplicates_skipped})...")
+-            card_name = None
++            candidate_num = idx + 1
++            clean_item_name = sanitize_string(item['name'])
++            print(f"\nExtracting lead ({new_leads_collected + 1}/{target_goal}, candidate {candidate_num}/{total_discovered}): '{clean_item_name}'...")
+             
+             try:
+-                card = page.locator(cards_selector).nth(card_index)
+-                card.scroll_into_view_if_needed(timeout=3000)
+-                random_delay(0.3, 0.7)
+-                
+-                # Attempt to extract business name from card to verify load match later
+-                try:
+-                    name_el = card.locator('.fontHeadlineSmall, [class*="title"], h3').first
+-                    if name_el.count() > 0:
+-                        card_name = name_el.inner_text().strip()
+-                except Exception:
+-                    pass
+-                
+-                # Check if business already exists in database (early deduplication)
+-                if card_name:
+-                    clean_name = re.sub(r'[^a-zA-Z0-9]', '', card_name.lower())
+-                    if clean_name and clean_name in existing_ids["names"]:
+-                        print(f"Skipping duplicate listing: '{card_name}' (already in database)")
+-                        duplicates_skipped += 1
+-                        card_index += 1
+-                        scrape_progress = 20 + int((new_leads_collected / max(1, limit)) * 50)
+-                        update_job_status(
+-                            job_id,
+-                            "active",
+-                            progress=scrape_progress,
+-                            stage="scraping",
+-                            current=new_leads_collected,
+-                            total=limit,
+-                            status_message=f"Skipped duplicate: {card_name} (Collected {new_leads_collected}/{limit} new leads)"
+-                        )
+-                        render_cli_progress(new_leads_collected, limit, prefix="Scraping Details", status=f"Duplicate: {card_name}")
+-                        continue
+-                        
+-                # Click the card to open place details
+-                card.click(timeout=5000)
++                detail_page.goto(item["url"], timeout=30000, wait_until="domcontentloaded")
+             except Exception as e:
+-                print(f"Warning: Could not click card {card_index + 1}: {e}")
+-                card_index += 1
++                print(f"Warning: Could not load listing URL '{item['url']}': {e}")
+                 continue
+ 
+-            # Wait for details panel to become visible
+-            details_panel = page.locator(details_panel_selector)
+             try:
+-                details_panel.wait_for(state="visible", timeout=8000)
++                detail_page.wait_for_selector('h1.DUwDvf, div[role="main"] h1', timeout=8000)
+             except Exception:
+-                print(f"Warning: Place details panel did not open for card {card_index + 1}.")
+-                card_index += 1
+-                continue
+-                
+-            # Verify the details panel matches the clicked card name
+-            if card_name:
+-                for _ in range(5):
+-                    try:
+-                        active_header = details_panel.locator('h1.DUwDvf').first
+-                        if active_header.count() > 0:
+-                            header_text = active_header.inner_text().strip()
+-                            if header_text and (card_name.lower() in header_text.lower() or header_text.lower() in card_name.lower()):
+-                                break
+-                    except Exception:
+-                        pass
+-                    time.sleep(0.3)
+-                    
+-            # Scroll details panel to trigger lazy loading of address, website, hours
++                pass
++
++            # Scroll details panel to trigger lazy loading of address, phone, website, hours
+             for _ in range(2):
+-                page.evaluate(
+-                    'const el = document.querySelector(\'div[role="main"][aria-label]\'); if (el) { el.scrollBy(0, 1000); }'
+-                )
+-                random_delay(0.3, 0.6)
+-                
+-            record = extract_details(details_panel, page)
+-            card_index += 1
+-            
+-            if record and record.get("name"):
+-                # Secondary deduplication check after full extraction
+-                is_dup = False
+-                if record.get("phone"):
+-                    clean_phone = re.sub(r'\D', '', str(record["phone"]))
+-                    if len(clean_phone) >= 10 and clean_phone[-10:] in existing_ids["phones"]:
+-                        is_dup = True
+-                if not is_dup and record.get("maps_url"):
+-                    clean_url = str(record["maps_url"]).split('?')[0].rstrip('/')
+-                    if clean_url in existing_ids["urls"]:
+-                        is_dup = True
+-                if not is_dup and record.get("name"):
+-                    clean_extracted_name = re.sub(r'[^a-zA-Z0-9]', '', str(record["name"]).lower())
+-                    if clean_extracted_name in existing_ids["names"]:
+-                        is_dup = True
+-                        
+-                if is_dup:
+-                    print(f"Skipping duplicate listing post-extract: '{record['name']}' (already in database)")
+-                    duplicates_skipped += 1
+-                    scrape_progress = 20 + int((new_leads_collected / max(1, limit)) * 50)
+-                    update_job_status(
+-                        job_id,
+-                        "active",
+-                        progress=scrape_progress,
+-                        stage="scraping",
+-                        current=new_leads_collected,
+-                        total=limit,
+-                        status_message=f"Skipped duplicate: {record['name']} (Collected {new_leads_collected}/{limit} new leads)"
+-                    )
+-                    render_cli_progress(new_leads_collected, limit, prefix="Scraping Details", status=f"Duplicate: {record['name']}")
+-                    continue
+-                    
+-                records.append(record)
+-                new_leads_collected += 1
++                detail_page.evaluate('const el = document.querySelector(\'div[role="main"][aria-label]\'); if (el) { el.scrollBy(0, 1000); }')
++                random_delay(0.2, 0.4)
++
++            main_panel = detail_page.locator('div[role="main"][aria-label]').first
++            if main_panel.count() == 0:
++                main_panel = detail_page.locator('div[role="main"]').first
+                 
+-                # Register in local identifiers set to prevent intra-scrape duplicates
+-                if record.get("name"):
+-                    existing_ids["names"].add(re.sub(r'[^a-zA-Z0-9]', '', str(record["name"]).lower()))
+-                if record.get("phone"):
+-                    digits = re.sub(r'\D', '', str(record["phone"]))
+-                    if len(digits) >= 10:
+-                        existing_ids["phones"].add(digits[-10:])
+-                if record.get("maps_url"):
+-                    existing_ids["urls"].add(str(record["maps_url"]).split('?')[0].rstrip('/'))
+-                    
+-                print(f"Scraped NEW Lead ({new_leads_collected}/{limit}): '{record.get('name')}' (Rating: {record.get('rating')}, Reviews: {record.get('reviews_count')})")
++            record = extract_details(main_panel, detail_page)
++            if not record or not record.get("name"):
++                record = record or {}
++                record["name"] = item["name"]
++                record["maps_url"] = item["url"]
+                 
+-                # Update status progress
+-                scrape_progress = 20 + int((new_leads_collected / max(1, limit)) * 50)
++            # Secondary deduplication check post-extraction
++            is_dup = False
++            if record.get("phone"):
++                clean_phone = re.sub(r'\D', '', str(record["phone"]))
++                if len(clean_phone) >= 10 and clean_phone[-10:] in existing_ids["phones"]:
++                    is_dup = True
++            if not is_dup and record.get("maps_url"):
++                c_url = str(record["maps_url"]).split('?')[0].rstrip('/')
++                if c_url in existing_ids["urls"]:
++                    is_dup = True
++            if not is_dup and record.get("name"):
++                c_name = re.sub(r'[^a-zA-Z0-9]', '', str(record["name"]).lower())
++                if c_name in existing_ids["names"]:
++                    is_dup = True
++
++            if is_dup:
++                print(f"Skipping duplicate listing post-extract: '{record['name']}' (already in database)")
++                duplicates_skipped += 1
++                scrape_progress = 22 + int((new_leads_collected / max(1, target_goal)) * 48)
+                 update_job_status(
+-                    job_id, 
+-                    "active", 
+-                    progress=scrape_progress, 
+-                    stage="scraping", 
+-                    current=new_leads_collected, 
+-                    total=limit,
+-                    status_message=f"Scraped {new_leads_collected}/{limit} new leads: {record.get('name')}"
++                    job_id,
++                    "active",
++                    progress=scrape_progress,
++                    stage="scraping",
++                    current=new_leads_collected,
++                    total=target_goal,
++                    status_message=f"Skipped duplicate: {record['name']} (Collected {new_leads_collected}/{target_goal} leads)"
+                 )
+-                render_cli_progress(new_leads_collected, limit, prefix="Scraping Details", status=f"{record.get('name')}")
+-                
+-                # Save batch when reaching 20 records
+-                if len(records) == 20:
+-                    save_batch(records, batch_num)
+-                    records = []
+-                    batch_num += 1
+-            else:
+-                fallback_name = card_name or f"Listing #{card_index}"
+-                print(f"Skipping listing '{fallback_name}': Could not extract valid details.")
++                render_cli_progress(new_leads_collected, target_goal, prefix="Scraping Details", status=f"Duplicate: {record['name']}")
+                 continue
+-                
+-        # Save remaining records at the end
++
++            records.append(record)
++            new_leads_collected += 1
++
++            if record.get("name"):
++                existing_ids["names"].add(re.sub(r'[^a-zA-Z0-9]', '', str(record["name"]).lower()))
++            if record.get("phone"):
++                digits = re.sub(r'\D', '', str(record["phone"]))
++                if len(digits) >= 10:
++                    existing_ids["phones"].add(digits[-10:])
++            if record.get("maps_url"):
++                existing_ids["urls"].add(str(record["maps_url"]).split('?')[0].rstrip('/'))
++
++            clean_disp_name = sanitize_string(record.get('name'))
++            print(f"Scraped NEW Lead ({new_leads_collected}/{target_goal}): '{clean_disp_name}' (Rating: {record.get('rating')}, Reviews: {record.get('reviews_count')})")
++
++            scrape_progress = 22 + int((new_leads_collected / max(1, target_goal)) * 48)
++            update_job_status(
++                job_id,
++                "active",
++                progress=scrape_progress,
++                stage="scraping",
++                current=new_leads_collected,
++                total=target_goal,
++                status_message=f"Scraped {new_leads_collected}/{target_goal} leads: {clean_disp_name}"
++            )
++            render_cli_progress(new_leads_collected, target_goal, prefix="Scraping Details", status=clean_disp_name)
++
++            if len(records) >= 10:
++                save_batch(records, batch_num)
++                records = []
++                batch_num += 1
++
+         if len(records) > 0:
+             save_batch(records, batch_num)
+-            
++
+         print(f"\nScraping session finished. Collected {new_leads_collected} new leads ({duplicates_skipped} duplicates skipped).")
++        detail_page.close()
+         browser.close()
+-        
+-    # Execute the post-scrape lead analysis and cleanup
++
++    # Execute post-scrape lead analysis and cleanup
+     process_and_cleanup_data(
+-        job_id=job_id, 
+-        query=query, 
+-        merge=merge, 
+-        provider=provider, 
+-        model=model, 
+-        hf_token=hf_token, 
++        job_id=job_id,
++        query=query,
++        merge=merge,
++        provider=provider,
++        model=model,
++        hf_token=hf_token,
+         enable_fallback=enable_fallback
+     )
+ 
+@@ -1709,13 +1751,18 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
+ def extract_details(details_panel, page):
+     """
+     Extracts all fields from the details panel.
++    All text fields are sanitized to remove private unicode symbols and prevent encoding errors.
+     """
+     record = {}
+     
+     # 1. Name
+     try:
+         name_el = details_panel.locator('h1.DUwDvf, h1:not([aria-label="Sponsored"]):not([aria-label="Ad"])').first
+-        record["name"] = name_el.inner_text().strip() if name_el.count() > 0 else None
++        if name_el.count() > 0:
++            raw_name = name_el.inner_text().strip()
++            record["name"] = sanitize_string(raw_name)
++        else:
++            record["name"] = None
+     except Exception:
+         record["name"] = None
+         
+@@ -1727,8 +1774,7 @@ def extract_details(details_panel, page):
+     try:
+         rating_el = details_panel.locator("div.F7nice span").first
+         if rating_el.count() > 0:
+-            rating_text = rating_el.inner_text().strip()
+-            rating_text = rating_text.replace(",", ".")
++            rating_text = rating_el.inner_text().strip().replace(",", ".")
+             if rating_text.replace(".", "", 1).isdigit():
+                 record["rating"] = float(rating_text)
+     except Exception:
+@@ -1771,28 +1817,18 @@ def extract_details(details_panel, page):
+     # 4. Category
+     record["category"] = None
+     try:
+-        cat_el = details_panel.locator('button[jsaction*="category"]').first
++        cat_el = details_panel.locator('button[jsaction*="category"], button[class*="category"]').first
+         if cat_el.count() > 0:
+-            record["category"] = cat_el.inner_text().strip()
++            record["category"] = sanitize_string(cat_el.inner_text())
+     except Exception:
+         pass
+-        
+-    if not record["category"]:
+-        try:
+-            cat_el = details_panel.locator('button[class*="category"]').first
+-            if cat_el.count() > 0:
+-                record["category"] = cat_el.inner_text().strip()
+-        except Exception:
+-            pass
+ 
+     # 5. Address
+     record["address"] = None
+     try:
+         addr_el = details_panel.locator('[data-item-id="address"]').first
+         if addr_el.count() > 0:
+-            raw_addr = addr_el.inner_text().strip()
+-            # Clean leading unicode icons (like \ue0c8) and extra whitespace
+-            record["address"] = re.sub(r'^[\s\ue000-\uf8ff]+', '', raw_addr).strip()
++            record["address"] = sanitize_string(addr_el.inner_text())
+     except Exception:
+         pass
+ 
+@@ -1803,9 +1839,9 @@ def extract_details(details_panel, page):
+         if phone_el.count() > 0:
+             item_id = phone_el.get_attribute("data-item-id")
+             if item_id and item_id.startswith("phone:tel:"):
+-                record["phone"] = item_id.replace("phone:tel:", "").strip()
++                record["phone"] = sanitize_string(item_id.replace("phone:tel:", ""))
+             else:
+-                record["phone"] = phone_el.inner_text().strip()
++                record["phone"] = sanitize_string(phone_el.inner_text())
+     except Exception:
+         pass
+ 
+@@ -1819,7 +1855,7 @@ def extract_details(details_panel, page):
+                 child_a = web_el.locator("a").first
+                 if child_a.count() > 0:
+                     href = child_a.get_attribute("href")
+-            record["website"] = href if href else web_el.inner_text().strip()
++            record["website"] = href if href else sanitize_string(web_el.inner_text())
+     except Exception:
+         pass
+ 
+@@ -1828,17 +1864,11 @@ def extract_details(details_panel, page):
+     try:
+         hours_el = details_panel.locator('[data-item-id="oh"]').first
+         if hours_el.count() > 0:
+-            initial_text = hours_el.inner_text().strip()
+-            try:
+-                hours_el.click(timeout=1000)
+-                random_delay(0.4, 0.6)
+-            except Exception:
+-                pass
+-                
++            initial_text = sanitize_string(hours_el.inner_text())
+             table_el = details_panel.locator("table").first
+             if table_el.count() > 0:
+                 table_text = table_el.inner_text().strip()
+-                record["opening_hours"] = "\n".join([line.strip() for line in table_text.splitlines() if line.strip()])
++                record["opening_hours"] = "\n".join([sanitize_string(line) for line in table_text.splitlines() if line.strip()])
+             else:
+                 record["opening_hours"] = initial_text
+     except Exception:
+@@ -1846,7 +1876,7 @@ def extract_details(details_panel, page):
+ 
+     # 9. Full text content of details panel
+     try:
+-        record["full_text"] = details_panel.inner_text().strip()
++        record["full_text"] = sanitize_string(details_panel.inner_text())
+     except Exception:
+         record["full_text"] = ""
+ 
+@@ -1866,7 +1896,6 @@ def extract_details(details_panel, page):
+     # Scrape website if needed
+     if record.get("website") and (not instagram_link or not facebook_link):
+         try:
+-            print(f"Scraping social profiles from website: {record['website']}...")
+             site_socials = extract_social_links_from_website(record["website"])
+             if site_socials.get("instagram") and not instagram_link:
+                 instagram_link = site_socials["instagram"]
+@@ -1876,8 +1905,8 @@ def extract_details(details_panel, page):
+                 facebook_link = site_socials["facebook"]
+                 if facebook_link not in social_links:
+                     social_links.append(facebook_link)
+-        except Exception as e:
+-            print(f"Warning: Failed website social scrape: {e}")
++        except Exception:
++            pass
+             
+     record["instagram"] = instagram_link
+     record["facebook"] = facebook_link
