@@ -236,6 +236,30 @@ function HomeContent() {
   } | null>(null);
   const [copiedHookIdx, setCopiedHookIdx] = useState<number | null>(null);
 
+  // Business Strategy Wizard State (3-step flow)
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [businessContext, setBusinessContext] = useState<string>('');
+  const [targetCity, setTargetCity] = useState<string>('');
+  const [nicheLoadingStep, setNicheLoadingStep] = useState<boolean>(false);
+  const [nicheSuggestions, setNicheSuggestions] = useState<Array<{
+    niche: string;
+    industry: string;
+    why: string;
+    pain_point: string;
+    service_offer: string;
+    icon: string;
+    opportunity_level: string;
+  }>>([]);
+  const [selectedNiche, setSelectedNiche] = useState<null | {
+    niche: string;
+    industry: string;
+    why: string;
+    pain_point: string;
+    service_offer: string;
+    icon: string;
+    opportunity_level: string;
+  }>(null);
+
   // Scraper Input State
   const [query, setQuery] = useState('');
   const [optimizingQuery, setOptimizingQuery] = useState(false);
@@ -578,6 +602,93 @@ function HomeContent() {
     if (strategy.custom_goal) setCustomGoal(strategy.custom_goal);
     setShowCopilotModal(false);
     showToast('Applied strategy to search query & qualification rubric!', 'success');
+  };
+
+  // Business Strategy Wizard: Step 1 → Step 2 (Niche Suggestions)
+  const handleGetNicheSuggestions = async () => {
+    if (!businessContext.trim()) {
+      showToast('Please describe your business or services first', 'info');
+      return;
+    }
+    setNicheLoadingStep(true);
+    try {
+      const res = await fetch('/api/ai-copilot', {
+        method: 'POST',
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          mode: 'suggest_niches',
+          business_context: businessContext.trim(),
+          target_city: targetCity.trim(),
+          hf_api_key: hfApiKey || null,
+          backend_url: backendUrl || null
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.niches && data.niches.length > 0) {
+        setNicheSuggestions(data.niches);
+        setWizardStep(2);
+      } else {
+        showToast(data.error || 'Could not generate niche suggestions', 'error');
+      }
+    } catch (err: any) {
+      showToast(`Error: ${err.message}`, 'error');
+    } finally {
+      setNicheLoadingStep(false);
+    }
+  };
+
+  // Business Strategy Wizard: Step 2 → Step 3 (Full Strategy for selected niche)
+  const handleGenerateNicheStrategy = async (niche: typeof nicheSuggestions[0]) => {
+    setSelectedNiche(niche);
+    setCopilotLoading(true);
+    setWizardStep(3);
+    const goalText = `${businessContext} targeting ${niche.niche} in ${targetCity || 'India'}. Focus: ${niche.pain_point}`;
+    try {
+      const res = await fetch('/api/ai-copilot', {
+        method: 'POST',
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          goal: goalText,
+          hf_api_key: hfApiKey || null,
+          backend_url: backendUrl || null
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setCopilotResult(data.data);
+      } else {
+        setCopilotResult({
+          query: `${niche.niche} in ${targetCity || 'Delhi'}`,
+          service_offer: niche.service_offer,
+          custom_goal: niche.pain_point,
+          suggested_queries: [
+            `${niche.niche} in ${targetCity || 'Delhi'}`,
+            `best ${niche.niche} in ${targetCity || 'Delhi'}`,
+            `top ${niche.niche} near me`
+          ],
+          target_audience: niche.why
+        });
+      }
+    } catch (err: any) {
+      setCopilotResult({
+        query: `${niche.niche} in ${targetCity || 'Delhi'}`,
+        service_offer: niche.service_offer,
+        custom_goal: niche.pain_point,
+        suggested_queries: [`${niche.niche} in ${targetCity || 'Delhi'}`],
+        target_audience: niche.why
+      });
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  // Open wizard fresh
+  const openStrategyWizard = () => {
+    setWizardStep(1);
+    setNicheSuggestions([]);
+    setSelectedNiche(null);
+    setCopilotResult(null);
+    setShowCopilotModal(true);
   };
 
   const handleCopyHook = (text: string, idx: number) => {
@@ -1827,91 +1938,84 @@ function HomeContent() {
                       </button>
                     </div>
 
-                    {/* AI Strategy Copilot Card (LLM Mode) */}
+                    {/* AI Strategy Copilot Card — Business Wizard + Quick Copilot */}
                     <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 border border-indigo-500/30 p-4 rounded-2xl relative overflow-hidden backdrop-blur-md">
-                      <div className="flex items-center justify-between gap-3 mb-2.5">
-                        <div className="flex items-center gap-2">
+                      {/* Decorative glow */}
+                      <div className="absolute -top-8 -right-8 w-32 h-32 bg-indigo-600/10 rounded-full blur-2xl pointer-events-none" />
+                      <div className="relative">
+                        <div className="flex items-center gap-2 mb-3">
                           <div className="p-1.5 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-lg text-white shadow-sm shadow-indigo-500/20">
                             <Bot className="w-4 h-4" />
                           </div>
                           <div>
                             <h4 className="text-xs font-black tracking-wide text-white uppercase flex items-center gap-1.5">
                               <span>AI Strategy Copilot</span>
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                LLM MODE
-                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">LLM MODE</span>
                             </h4>
-                            <p className="text-[11px] text-slate-400">Describe your client offer in natural language (English / Hinglish)</p>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Tell AI your business → it finds the best niches to target & pitch</p>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowCopilotModal(true)}
-                          className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold underline underline-offset-2 shrink-0"
-                        >
-                          Full Assistant →
-                        </button>
-                      </div>
 
-                      <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                          <input
-                            type="text"
-                            placeholder="e.g. Dentists in South Delhi to pitch WhatsApp AI appointment booking bot"
-                            value={copilotInput}
-                            onChange={(e) => setCopilotInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                handleRunCopilot();
-                              }
-                            }}
-                            className="w-full bg-slate-950/90 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder:text-slate-500 transition-all font-medium"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          disabled={copilotLoading}
-                          onClick={() => handleRunCopilot()}
-                          className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 flex items-center gap-1.5 shrink-0 disabled:opacity-50"
-                        >
-                          {copilotLoading ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Analyzing...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Wand2 className="w-3.5 h-3.5 text-amber-300" />
-                              <span>Synthesize</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-
-                      {/* Fast Preset Inspiration Chips */}
-                      <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                        <span className="text-[10px] text-slate-500 font-semibold">Try:</span>
-                        {[
-                          { label: '🌐 Websites for Clinics', goal: 'Dental clinics in South Delhi without website to pitch custom web design' },
-                          { label: '🤖 AI Bot for Salons', goal: 'Luxury hair salons in Mumbai to pitch WhatsApp AI appointment receptionist' },
-                          { label: '⚡ CRM for Realtors', goal: 'Real estate consultants in Gurgaon for automated CRM and lead follow up' },
-                          { label: '📈 5-Star Reviews for Gyms', goal: 'Gyms and fitness centers in Bangalore with low rating to pitch local SEO review growth' }
-                        ].map((chip, cIdx) => (
+                        {/* Two-button entry */}
+                        <div className="grid grid-cols-2 gap-2">
                           <button
-                            key={cIdx}
+                            type="button"
+                            onClick={openStrategyWizard}
+                            className="flex flex-col items-start gap-1 p-3 bg-gradient-to-br from-indigo-600/20 to-purple-600/10 hover:from-indigo-600/30 hover:to-purple-600/20 border border-indigo-500/40 hover:border-indigo-400/60 rounded-xl transition-all group text-left"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-300" />
+                              <span className="text-xs font-bold text-indigo-300 group-hover:text-indigo-200">Business Wizard</span>
+                              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">NEW</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 leading-tight">Describe your business → AI suggests niches → generates strategy</span>
+                          </button>
+
+                          <button
                             type="button"
                             onClick={() => {
-                              setCopilotInput(chip.goal);
-                              handleRunCopilot(chip.goal);
+                              setWizardStep(1);
+                              setCopilotResult(null);
+                              setNicheSuggestions([]);
+                              setCopilotInput('');
+                              setShowCopilotModal(true);
                             }}
-                            className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-all"
+                            className="flex flex-col items-start gap-1 p-3 bg-slate-950/60 hover:bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-xl transition-all group text-left"
                           >
-                            {chip.label}
+                            <div className="flex items-center gap-1.5">
+                              <Wand2 className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-300" />
+                              <span className="text-xs font-bold text-slate-300 group-hover:text-slate-200">Quick Copilot</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 leading-tight">Describe pitch goal directly & generate query instantly</span>
                           </button>
-                        ))}
+                        </div>
+
+                        {/* Fast Preset Chips */}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                          <span className="text-[10px] text-slate-500 font-semibold">Quick tries:</span>
+                          {[
+                            { label: '🌐 Websites for Clinics', goal: 'Dental clinics in South Delhi without website to pitch custom web design' },
+                            { label: '🤖 AI Bot for Salons', goal: 'Luxury hair salons in Mumbai to pitch WhatsApp AI appointment receptionist' },
+                            { label: '⚡ CRM for Realtors', goal: 'Real estate consultants in Gurgaon for automated CRM and lead follow up' }
+                          ].map((chip, cIdx) => (
+                            <button
+                              key={cIdx}
+                              type="button"
+                              onClick={() => {
+                                setCopilotInput(chip.goal);
+                                setWizardStep(1);
+                                setShowCopilotModal(true);
+                                setTimeout(() => handleRunCopilot(chip.goal), 150);
+                              }}
+                              className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-all"
+                            >
+                              {chip.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
+
 
                     {/* Enterprise Target Offer Selector */}
                     <div className="flex flex-col gap-2">
@@ -3256,186 +3360,336 @@ function HomeContent() {
         </div>
       )}
 
-      {/* AI Strategy Copilot Assistant Modal */}
+      {/* AI Business Strategy Wizard Modal */}
       {showCopilotModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-          <div className="relative w-full max-w-2xl bg-slate-900 border border-indigo-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
-            {/* Top Glowing Header */}
-            <div className="p-6 border-b border-slate-800 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 flex items-center justify-between shrink-0">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-indigo-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-scale-in">
+
+            {/* Header */}
+            <div className="p-5 border-b border-slate-800 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-purple-950/80 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl text-white shadow-lg shadow-indigo-500/25">
-                  <Bot className="w-6 h-6" />
+                <div className="p-2.5 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-xl text-white shadow-lg shadow-indigo-500/30">
+                  <Bot className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white">AI LeadGen Strategy Copilot</h3>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      LLM MODE
-                    </span>
+                    <h3 className="text-sm font-bold text-white">AI Business Strategy Wizard</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-indigo-500/25 text-indigo-300 border border-indigo-500/40">LLM MODE</span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Formulate high-converting Google Maps queries & qualification rubrics
-                  </p>
+                  {/* Step breadcrumb */}
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {[{n: 1, label: 'Your Business'}, {n: 2, label: 'Target Niches'}, {n: 3, label: 'Strategy'}].map((s) => (
+                      <div key={s.n} className="flex items-center gap-1">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-all ${
+                          wizardStep === s.n ? 'bg-indigo-600 text-white' :
+                          wizardStep > s.n ? 'bg-emerald-900/60 text-emerald-400 border border-emerald-500/30' :
+                          'bg-slate-800 text-slate-500'
+                        }`}>{s.n}. {s.label}</span>
+                        {s.n < 3 && <span className="text-slate-700 text-[10px]">›</span>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <button
-                onClick={() => setShowCopilotModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all"
-              >
-                ✕
-              </button>
+              <button onClick={() => setShowCopilotModal(false)} className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all">✕</button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-5">
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5 block">
-                  Describe What You Want to Pitch or Sell
-                </label>
-                <p className="text-xs text-slate-400 mb-2 leading-relaxed">
-                  Type your business offer, target city, and ideal client in plain English or Hinglish. AI will determine the optimal search query, select the matching enterprise lead qualification rubric, and generate personalized cold outreach hooks.
-                </p>
-                <textarea
-                  rows={3}
-                  value={copilotInput}
-                  onChange={(e) => setCopilotInput(e.target.value)}
-                  placeholder="e.g. 'I want to pitch website design and SEO to cosmetic dentists in South Delhi who have reviews but no good website' or 'Pitching 24/7 WhatsApp AI receptionist to real estate consultants in Gurgaon'"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-xs text-slate-200 placeholder:text-slate-600 outline-none transition-all resize-none font-medium"
-                />
-              </div>
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto">
 
-              {/* Preset buttons */}
-              <div>
-                <span className="text-[11px] font-semibold text-slate-400 block mb-1.5">Or choose a quick agency campaign blueprint:</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[
-                    {
-                      label: '🌐 Website Pitch for Dental Clinics',
-                      goal: 'Dental clinics in South Delhi with good reviews but missing website to pitch custom web design'
-                    },
-                    {
-                      label: '🤖 WhatsApp AI Receptionist for Salons',
-                      goal: 'High-end hair & beauty salons in Mumbai to pitch 24/7 WhatsApp booking and inquiry bot'
-                    },
-                    {
-                      label: '⚡ Automated CRM for Real Estate',
-                      goal: 'Real estate consultants in Gurgaon to pitch instant CRM lead follow-up and appointment sync'
-                    },
-                    {
-                      label: '📈 5-Star Local Review Growth for Gyms',
-                      goal: 'Gyms and fitness centers in Bangalore with low reviews to pitch Google Maps ranking & review boost'
-                    }
-                  ].map((preset, pIdx) => (
-                    <button
-                      key={pIdx}
-                      type="button"
-                      onClick={() => {
-                        setCopilotInput(preset.goal);
-                        handleRunCopilot(preset.goal);
-                      }}
-                      className="text-left p-2.5 bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800 rounded-xl text-xs text-slate-300 hover:text-white transition-all flex flex-col gap-0.5"
-                    >
-                      <span className="font-semibold text-indigo-300">{preset.label}</span>
-                      <span className="text-[10px] text-slate-500 truncate">{preset.goal}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Synthesized Results Card */}
-              {copilotResult && (
-                <div className="p-4 bg-slate-950/90 border border-indigo-500/40 rounded-xl space-y-3.5 animate-fadeIn">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                      <CheckCircle className="w-4 h-4" />
-                      <span>Synthesized Campaign Strategy</span>
-                    </span>
-                    {copilotResult.service_offer && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-indigo-950 text-indigo-300 border border-indigo-500/30">
-                        Offer: {copilotResult.service_offer.replace('_', ' ')}
-                      </span>
-                    )}
+              {/* ────── STEP 1: Business Context ────── */}
+              {wizardStep === 1 && (
+                <div className="p-6 space-y-5">
+                  <div>
+                    <h4 className="text-sm font-bold text-white mb-1">Tell AI about your business & services</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed mb-3">
+                      Describe what you sell — e.g. <em className="text-slate-300">"website design", "WhatsApp AI bots", "CRM automation", "local SEO"</em>. AI will suggest which industries to target and how to pitch.
+                    </p>
+                    <textarea
+                      rows={3}
+                      value={businessContext}
+                      onChange={(e) => setBusinessContext(e.target.value)}
+                      placeholder="e.g. 'We build custom websites and landing pages for local businesses. We also offer WhatsApp automation and AI chatbots for appointment booking.' (Hindi/English/Hinglish sab chalega!)"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-xs text-slate-200 placeholder:text-slate-600 outline-none transition-all resize-none font-medium leading-relaxed"
+                    />
                   </div>
 
-                  <div className="space-y-2 text-xs">
-                    <div>
-                      <span className="text-slate-500 font-semibold block">Recommended Google Maps Search Query:</span>
-                      <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 font-bold mt-1 flex items-center justify-between">
-                        <span>&ldquo;{copilotResult.query}&rdquo;</span>
-                        <span className="text-[10px] text-indigo-400 font-mono">Primary Query</span>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                      <span>Target City / Area</span>
+                      <span className="text-[10px] text-slate-500 font-normal">(optional, improves results)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={targetCity}
+                      onChange={(e) => setTargetCity(e.target.value)}
+                      placeholder="e.g. South Delhi, Gurgaon, Mumbai, Bangalore..."
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 placeholder:text-slate-600 outline-none transition-all"
+                    />
+                  </div>
+
+                  {/* OR divider */}
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-800" /></div>
+                    <div className="relative flex justify-center"><span className="bg-slate-900 px-3 text-[10px] text-slate-500 font-semibold">OR use Quick Copilot instead</span></div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-slate-400">Quick Copilot — describe pitch goal directly:</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={copilotInput}
+                        onChange={(e) => setCopilotInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCopilot(); } }}
+                        placeholder="e.g. Dentists in South Delhi to pitch WhatsApp AI bot"
+                        className="flex-1 bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 placeholder:text-slate-600 outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        disabled={copilotLoading || !copilotInput.trim()}
+                        onClick={() => handleRunCopilot()}
+                        className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                      >
+                        {copilotLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                        <span>Go</span>
+                      </button>
+                    </div>
+                    {/* Preset chips */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {[
+                        { label: '🌐 Web Design → Clinics', goal: 'Dental clinics in South Delhi without website to pitch custom web design' },
+                        { label: '🤖 AI Bot → Salons', goal: 'Luxury hair salons in Mumbai to pitch 24/7 WhatsApp AI booking bot' },
+                        { label: '⚡ CRM → Realtors', goal: 'Real estate consultants in Gurgaon to pitch automated CRM follow-up' },
+                        { label: '📈 SEO → Gyms', goal: 'Gyms in Bangalore with low rating to pitch Google Maps SEO and review growth' }
+                      ].map((chip, ci) => (
+                        <button key={ci} type="button"
+                          onClick={() => { setCopilotInput(chip.goal); setTimeout(() => handleRunCopilot(chip.goal), 50); }}
+                          className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-all"
+                        >{chip.label}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Quick copilot result */}
+                  {copilotResult && !nicheLoadingStep && (
+                    <div className="p-4 bg-emerald-950/30 border border-emerald-500/30 rounded-xl space-y-2.5 animate-in fade-in duration-200">
+                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" /> Strategy Ready (Quick Copilot)</span>
+                      <div className="text-xs space-y-1.5">
+                        <div><span className="text-slate-500">Search Query: </span><span className="text-slate-100 font-bold">"{copilotResult.query}"</span></div>
+                        {copilotResult.target_audience && <div><span className="text-slate-500">ICP: </span><span className="text-slate-300">{copilotResult.target_audience}</span></div>}
+                        {copilotResult.suggested_queries && copilotResult.suggested_queries.length > 1 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {copilotResult.suggested_queries.slice(0, 4).map((q, i) => (
+                              <button key={i} type="button" onClick={() => { setQuery(q); showToast(`Query set: "${q}"`, 'info'); }}
+                                className="px-2 py-0.5 bg-slate-900 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/40 rounded text-[10px] text-slate-300 hover:text-indigo-200 transition-all font-mono">{q}</button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
 
-                    {copilotResult.target_audience && (
-                      <div>
-                        <span className="text-slate-500 font-semibold block">Target Customer Profile (ICP):</span>
-                        <p className="text-slate-300 mt-0.5 leading-relaxed">{copilotResult.target_audience}</p>
-                      </div>
-                    )}
-
-                    {copilotResult.suggested_queries && copilotResult.suggested_queries.length > 1 && (
-                      <div>
-                        <span className="text-slate-500 font-semibold block mb-1">Alternative Search Queries to Scale:</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {copilotResult.suggested_queries.map((q, qIdx) => (
-                            <button
-                              key={qIdx}
-                              type="button"
-                              onClick={() => {
-                                setQuery(q);
-                                showToast(`Selected query: "${q}"`, 'info');
-                              }}
-                              className="px-2.5 py-1 bg-slate-900 hover:bg-indigo-950/70 border border-slate-800 hover:border-indigo-500/40 rounded-lg text-xs text-slate-300 hover:text-indigo-200 transition-all font-mono"
-                            >
-                              {q}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+              {/* ────── STEP 2: Niche Suggestions ────── */}
+              {wizardStep === 2 && (
+                <div className="p-6 space-y-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-white mb-0.5">Choose a target niche to pursue</h4>
+                    <p className="text-xs text-slate-400">AI analyzed your business and found these high-opportunity industries to target with your services.</p>
                   </div>
+
+                  {/* Business context recap */}
+                  <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl flex items-start gap-2">
+                    <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="text-[11px] text-slate-400">
+                      <span className="font-semibold text-slate-300">Your business: </span>{businessContext.slice(0, 120)}{businessContext.length > 120 ? '...' : ''}
+                      {targetCity && <span className="ml-2 text-indigo-400 font-medium">📍 {targetCity}</span>}
+                    </div>
+                  </div>
+
+                  {/* Niche cards */}
+                  <div className="grid grid-cols-1 gap-2.5">
+                    {nicheSuggestions.map((niche, idx) => {
+                      const opportunityColors: Record<string, string> = {
+                        'Very High': 'text-amber-300 bg-amber-950/50 border-amber-500/40',
+                        'High': 'text-emerald-300 bg-emerald-950/40 border-emerald-500/30',
+                        'Medium': 'text-indigo-300 bg-indigo-950/40 border-indigo-500/30'
+                      };
+                      const oppColor = opportunityColors[niche.opportunity_level] || opportunityColors['Medium'];
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleGenerateNicheStrategy(niche)}
+                          className="w-full text-left p-4 bg-slate-950/60 hover:bg-indigo-950/20 border border-slate-800 hover:border-indigo-500/50 rounded-xl transition-all group"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className="text-lg leading-none">{niche.icon}</span>
+                                <span className="text-sm font-bold text-slate-100 group-hover:text-indigo-200 transition-colors">{niche.niche}</span>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${oppColor}`}>{niche.opportunity_level}</span>
+                              </div>
+                              <p className="text-[11px] text-slate-400 leading-relaxed mb-1.5">{niche.why}</p>
+                              <div className="flex items-start gap-1.5">
+                                <span className="text-[10px] text-rose-400 font-semibold shrink-0">Pain point:</span>
+                                <span className="text-[10px] text-slate-400 leading-tight">{niche.pain_point}</span>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2 shrink-0">
+                              <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-950/60 text-indigo-300 border border-indigo-500/25 font-mono uppercase">{niche.service_offer.replace(/_/g, ' ')}</span>
+                              <span className="text-[10px] text-indigo-400 group-hover:text-indigo-300 font-semibold">Select →</span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ────── STEP 3: Full Strategy Result ────── */}
+              {wizardStep === 3 && (
+                <div className="p-6 space-y-4">
+                  {copilotLoading ? (
+                    <div className="flex flex-col items-center justify-center gap-4 py-14">
+                      <div className="relative">
+                        <div className="w-16 h-16 rounded-full border-2 border-indigo-500/30 flex items-center justify-center bg-indigo-950/20">
+                          <Bot className="w-7 h-7 text-indigo-400" />
+                        </div>
+                        <Loader2 className="absolute -top-1 -right-1 w-5 h-5 text-indigo-400 animate-spin" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-white">Building your strategy...</p>
+                        <p className="text-xs text-slate-400 mt-1">AI is crafting queries, scoring rubrics & pitch hooks for <span className="text-indigo-300 font-semibold">{selectedNiche?.niche}</span></p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Niche recap */}
+                      {selectedNiche && (
+                        <div className="p-3.5 bg-gradient-to-r from-indigo-950/60 to-purple-950/40 border border-indigo-500/30 rounded-xl">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xl leading-none">{selectedNiche.icon}</span>
+                            <span className="text-sm font-bold text-indigo-200">{selectedNiche.niche}</span>
+                            <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-500/30 font-mono uppercase">{selectedNiche.service_offer.replace(/_/g, ' ')}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 ml-8 leading-relaxed">{selectedNiche.pain_point}</p>
+                        </div>
+                      )}
+
+                      {copilotResult && (
+                        <div className="space-y-3.5">
+                          {/* Primary query */}
+                          <div>
+                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">🔍 Google Maps Search Queries</span>
+                            <div className="p-3 bg-slate-950/80 border border-emerald-500/30 rounded-xl">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-bold text-slate-100">&ldquo;{copilotResult.query}&rdquo;</span>
+                                <button type="button" onClick={() => { setQuery(copilotResult.query || ''); }}
+                                  className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold border border-emerald-500/30 px-2 py-0.5 rounded hover:bg-emerald-950/40 transition-all">Use This</button>
+                              </div>
+                              {copilotResult.suggested_queries && copilotResult.suggested_queries.length > 1 && (
+                                <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-800">
+                                  {copilotResult.suggested_queries.slice(0, 5).map((q, i) => (
+                                    <button key={i} type="button"
+                                      onClick={() => { setQuery(q); showToast(`Query set: "${q}"`, 'info'); }}
+                                      className="px-2.5 py-1 bg-slate-900 hover:bg-indigo-950/60 border border-slate-800 hover:border-indigo-500/30 rounded-lg text-[10px] text-slate-300 hover:text-indigo-200 transition-all font-mono">{q}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* ICP */}
+                          {copilotResult.target_audience && (
+                            <div>
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">🎯 Ideal Customer Profile (ICP)</span>
+                              <p className="text-xs text-slate-300 bg-slate-950/60 border border-slate-800 p-3 rounded-xl leading-relaxed">{copilotResult.target_audience}</p>
+                            </div>
+                          )}
+
+                          {/* Pitch angle */}
+                          {copilotResult.custom_goal && (
+                            <div>
+                              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">💬 Pitch Angle & Qualification Goal</span>
+                              <p className="text-xs text-slate-300 bg-indigo-950/20 border border-indigo-500/20 p-3 rounded-xl leading-relaxed">{copilotResult.custom_goal}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between shrink-0">
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between shrink-0">
               <button
                 type="button"
-                onClick={() => setShowCopilotModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors"
+                onClick={() => {
+                  if (wizardStep === 3) { setWizardStep(2); setCopilotResult(null); }
+                  else if (wizardStep === 2) { setWizardStep(1); setNicheSuggestions([]); }
+                  else { setShowCopilotModal(false); }
+                }}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl transition-all"
               >
-                Close
+                {wizardStep === 1 ? 'Close' : '← Back'}
               </button>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={copilotLoading || !copilotInput.trim()}
-                  onClick={() => handleRunCopilot()}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {copilotLoading ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                      <span>Synthesizing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Wand2 className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Re-Analyze</span>
-                    </>
-                  )}
-                </button>
-
-                {copilotResult && (
+                {/* Step 1 → Step 2 */}
+                {wizardStep === 1 && (
                   <button
                     type="button"
-                    onClick={() => handleApplyCopilotStrategy(copilotResult)}
-                    className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-1.5"
+                    disabled={nicheLoadingStep || !businessContext.trim()}
+                    onClick={handleGetNicheSuggestions}
+                    className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {nicheLoadingStep ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Finding Niches...</span></>
+                    ) : (
+                      <><Sparkles className="w-3.5 h-3.5 text-amber-300" /><span>Suggest Target Niches →</span></>
+                    )}
+                  </button>
+                )}
+
+                {/* Step 1 quick copilot apply */}
+                {wizardStep === 1 && copilotResult && !nicheLoadingStep && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (copilotResult.query) setQuery(copilotResult.query);
+                      if (copilotResult.service_offer) setServiceOffer(copilotResult.service_offer);
+                      if (copilotResult.custom_goal) setCustomGoal(copilotResult.custom_goal);
+                      setShowCopilotModal(false);
+                      showToast('🎯 Quick strategy applied!', 'success');
+                    }}
+                    className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" /><span>Apply & Close</span>
+                  </button>
+                )}
+
+                {/* Step 3: Apply full strategy */}
+                {wizardStep === 3 && copilotResult && !copilotLoading && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (copilotResult.query) setQuery(copilotResult.query);
+                      if (selectedNiche) setServiceOffer(selectedNiche.service_offer);
+                      else if (copilotResult.service_offer) setServiceOffer(copilotResult.service_offer);
+                      if (copilotResult.custom_goal) setCustomGoal(copilotResult.custom_goal);
+                      setShowCopilotModal(false);
+                      showToast('🎯 Strategy applied! Query & qualification rubric filled in.', 'success');
+                    }}
+                    className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/20 flex items-center gap-1.5"
                   >
                     <Check className="w-3.5 h-3.5" />
-                    <span>Apply Strategy & Fill Form</span>
+                    <span>Apply Strategy & Start Scraping</span>
                   </button>
                 )}
               </div>
