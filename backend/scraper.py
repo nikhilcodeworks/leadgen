@@ -568,7 +568,79 @@ def parse_location_from_address(address, query=""):
     return city, zone, locality
 
 
-def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=None):
+OFFER_DESCRIPTIONS = {
+    "all_round": {
+        "title": "Comprehensive B2B Digital Growth & Automation",
+        "focus": "Identify general digital presence gaps (missing website, lack of WhatsApp channel, manual booking, low review velocity).",
+        "scoring_guide": "Score 85-100 (🔥 Hot) for active businesses with high reviews/traffic but missing website or WhatsApp. Score 70-84 (🟢 Good) for weak online setup. Score <45 for fully optimized businesses.",
+        "default_service": "WhatsApp Business API + Website Optimization"
+    },
+    "website": {
+        "title": "Website Design & Development Pitch",
+        "focus": "Identify businesses with NO website, an unresponsive/broken site, or third-party directory links (JustDial/Yelp/Wixsite/Blogspot).",
+        "scoring_guide": "Score 90-100 (🔥 Hot) if business has 15+ reviews and good rating but NO website. Score 75-89 (🟢 Good) if website is poor/unresponsive. Score <40 (❌ Skip) if they already have a modern, high-end website.",
+        "default_service": "Custom Mobile-Responsive Direct-Booking Website"
+    },
+    "ai_agent": {
+        "title": "24/7 AI Voice & WhatsApp Receptionist / Chatbots",
+        "focus": "Target busy, inquiry-heavy businesses (clinics, salons, restaurants, legal, real estate, auto services) that receive client calls/messages after closing or during peak hours.",
+        "scoring_guide": "Score 90-100 (🔥 Hot) if business has high reviews (>25) and phone, but no 24/7 automated booking or instant WhatsApp response. Score <40 if low inquiry volume.",
+        "default_service": "24/7 WhatsApp & Voice AI Receptionist"
+    },
+    "crm_automation": {
+        "title": "CRM, Lead Capture & WhatsApp Automation",
+        "focus": "Target businesses managing client inquiries manually without automated lead capture, instant SMS/WhatsApp confirmations, or automated follow-up sequences.",
+        "scoring_guide": "Score 85-100 (🔥 Hot) if service business with manual consultations and no automated lead pipeline. Score <45 if fully automated.",
+        "default_service": "Automated WhatsApp Lead Capture & CRM Pipeline"
+    },
+    "local_seo": {
+        "title": "Google Maps 3-Pack SEO & Review Reputation Growth",
+        "focus": "Identify businesses with ratings under 4.3, low review count compared to area competitors, or incomplete listing details.",
+        "scoring_guide": "Score 85-100 (🔥 Hot) if rating is 3.5-4.2 or reviews < 30 in a high-demand locality. Score <40 if already dominating the area with 1000+ 5-star reviews.",
+        "default_service": "Google Maps 3-Pack SEO & 5-Star Review Automation"
+    },
+    "custom": {
+        "title": "Custom Pitch / Ideal Customer Profile",
+        "focus": "Evaluate business fit strictly based on the user's custom criteria.",
+        "scoring_guide": "Evaluate lead score (0-100) and qualification tier based strictly on the user's custom goal.",
+        "default_service": "Custom Tailored Solution"
+    }
+}
+
+
+def get_offer_evaluation_prompt(service_offer="all_round", custom_goal=""):
+    offer_key = (service_offer or "all_round").lower().strip()
+    offer = OFFER_DESCRIPTIONS.get(offer_key, OFFER_DESCRIPTIONS["all_round"])
+    custom_part = f"\nUSER'S CUSTOM PITCH / ICP OBJECTIVE:\n{custom_goal.strip()}\n" if custom_goal and custom_goal.strip() else ""
+
+    instruction = (
+        f"You are an elite B2B sales development strategist evaluating a Google Maps business listing.\n"
+        f"TARGET OFFER: {offer['title']}\n"
+        f"EVALUATION FOCUS: {offer['focus']}\n"
+        f"QUALIFICATION & SCORING GUIDELINES:\n{offer['scoring_guide']}\n"
+        f"{custom_part}\n"
+        "Your mission is to accurately evaluate whether this business is a genuine paying prospect for this SPECIFIC offer.\n"
+        "You MUST respond ONLY with a raw, valid JSON object without markdown formatting, code fences, or explanatory text.\n"
+        "The JSON MUST have the following keys:\n"
+        "city (string), zone (string), locality (string), "
+        "website_quality (one of: 'No Website', 'Poor', 'Average', 'Good', 'Excellent'), "
+        "mobile_website (one of: 'No Website', 'Yes', 'No', 'Unknown'), "
+        "online_booking (one of: 'Yes', 'No', 'Unknown'), "
+        "whatsapp (one of: 'Yes', 'No'), "
+        "instagram (string), instagram_activity (one of: 'Active', 'Inactive', 'Unknown'), "
+        "facebook (string), contact_person (string), "
+        "problem_found (string: specific operational bottleneck or digital gap relevant to the offer), "
+        "problem_evidence (string: concrete proof from listing text, hours, reviews, or website), "
+        "recommended_service (string: exact service package to pitch), "
+        "pitch_angle (string: psychological angle or value proposition for the outreach), "
+        "personalized_hook (string: a punchy, ready-to-send 2-line cold outreach DM/WhatsApp message personalized to the business name, rating, and identified gap), "
+        "lead_score (integer from 0 to 100 reflecting fit for THIS specific offer), "
+        "lead_tier (one of: '🔥 Hot', '🟢 Good', '🟡 Medium', '❌ Skip')."
+    )
+    return instruction
+
+
+def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=None, system_instruction=None):
     """
     Calls Hugging Face Router or Serverless Inference API for chat completions.
     Parses and returns structured JSON conforming to LeadAnalysis schema.
@@ -580,21 +652,8 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
     if hf_token:
         headers["Authorization"] = f"Bearer {hf_token.strip()}"
         
-    system_instruction = (
-        "You are an expert lead generation analyst. Analyse the business listing and evaluate lead potential. "
-        "You MUST respond ONLY with a raw, valid JSON object without markdown formatting, code fences, or additional text. "
-        "The JSON MUST have the following keys:\n"
-        "city (string), zone (string), locality (string), "
-        "website_quality (one of: 'No Website', 'Poor', 'Average', 'Good', 'Excellent'), "
-        "mobile_website (one of: 'No Website', 'Yes', 'No', 'Unknown'), "
-        "online_booking (one of: 'Yes', 'No', 'Unknown'), "
-        "whatsapp (one of: 'Yes', 'No'), "
-        "instagram (string), instagram_activity (one of: 'Active', 'Inactive', 'Unknown'), "
-        "facebook (string), contact_person (string), "
-        "problem_found (string), problem_evidence (string), recommended_service (string), "
-        "pitch_angle (string), lead_score (integer from 0 to 100), "
-        "lead_tier (one of: '🔥 Hot', '🟢 Good', '🟡 Medium', '❌ Skip')."
-    )
+    if not system_instruction:
+        system_instruction = get_offer_evaluation_prompt("all_round")
     
     payload = {
         "model": model_name,
@@ -637,12 +696,13 @@ def query_huggingface(prompt, model_name="Qwen/Qwen2.5-72B-Instruct", hf_token=N
     raise RuntimeError(f"Hugging Face call failed: {last_error}")
 
 
-def analyze_lead_with_fallback(record, provider="huggingface", requested_model=None, gemini_client=None, hf_token=None, enable_fallback=True):
+def analyze_lead_with_fallback(record, provider="huggingface", requested_model=None, gemini_client=None, hf_token=None, enable_fallback=True, service_offer="all_round", custom_goal=""):
     """
-    Evaluates a single lead using Hugging Face models.
+    Evaluates a single lead using Hugging Face models tailored to the specific service offer.
     Automatically cascades through top open-weights models if primary encounters errors.
     """
-    prompt = f"Analyse the following raw text content of a business listing from Google Maps:\n\n{record.get('full_text', '')}\n\nExtract all valuable details and evaluate the potential of this lead."
+    system_instruction = get_offer_evaluation_prompt(service_offer=service_offer, custom_goal=custom_goal)
+    prompt = f"Analyse the following raw text content of a business listing from Google Maps:\n\n{record.get('full_text', '')}\n\nExtract all valuable details and evaluate the potential of this lead for the offer: '{service_offer}'."
     
     primary_model = requested_model if (requested_model and requested_model != "auto") else "Qwen/Qwen2.5-72B-Instruct"
     
@@ -660,7 +720,7 @@ def analyze_lead_with_fallback(record, provider="huggingface", requested_model=N
     for m_name in model_queue:
         try:
             time.sleep(0.5)
-            res_data = query_huggingface(prompt, model_name=m_name, hf_token=hf_token)
+            res_data = query_huggingface(prompt, model_name=m_name, hf_token=hf_token, system_instruction=system_instruction)
             return res_data, f"HF ({m_name})"
         except Exception as e:
             err_msg = str(e)
@@ -724,11 +784,11 @@ def load_existing_identifiers(excel_path):
     return existing
 
 
-def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True):
+def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True, service_offer="all_round", custom_goal=""):
     """
-    Reads all raw scraped batch files in 'data/', evaluates them using Gemini / Hugging Face LLM,
-    appends the results to 'data/final.txt', converts 'final.txt' to a sorted Excel
-    sheet in 'leadsdata/', and finally erases the 'data/' folder.
+    Reads all raw scraped batch files in 'data/', evaluates them using Gemini / Hugging Face LLM
+    tailored to the selected service offer or custom ICP goal, appends the results to 'data/final.txt',
+    converts 'final.txt' to a sorted Excel sheet in 'leadsdata/', and finally erases the 'data/' folder.
     Supports dynamic fallback across models and providers to prevent 503/rate limit downtime.
     """
     data_dir = "data"
@@ -770,16 +830,17 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
             update_job_status(job_id, "failed", status_message="No raw listings found to analyze.")
         return
         
-    print(f"\n--- Starting Lead Analysis Phase on {len(t_files)} batch files ---")
+    offer_display = (service_offer or "all_round").replace("_", " ").title()
+    print(f"\n--- Starting Lead Qualification Phase [{offer_display}] on {len(t_files)} batch files ---")
     
     # Check for Hugging Face API key
     huggingface_key = hf_token or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN")
     has_ai = bool(huggingface_key)
     if has_ai:
         prov_info = f"Hugging Face Model: {model or 'Qwen/Qwen2.5-72B-Instruct'}"
-        print(f"Hugging Face AI Lead Analyzer initialized ({prov_info} | Fallback: {enable_fallback})")
+        print(f"Hugging Face AI Lead Analyzer initialized ({prov_info} | Offer: {offer_display} | Fallback: {enable_fallback})")
     else:
-        print("Running in offline mode (No Hugging Face Token found). AI analysis skipped.")
+        print(f"Running in offline mode (No Hugging Face Token found). Using deterministic qualification rubric for '{offer_display}'.")
         
     all_analyzed_records = []
     final_txt_path = os.path.join(data_dir, "final.txt")
@@ -819,7 +880,7 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
                             analysis_progress = 70 + int((analyzed_count / total_records) * 25)
                             lead_name = record.get('name') or f"Lead #{analyzed_count}"
                             stage_label = "analyzing" if has_ai else "processing"
-                            msg_prefix = "AI Evaluating" if has_ai else "Processing lead"
+                            msg_prefix = f"AI Qualifying [{offer_display}]" if has_ai else f"Evaluating [{offer_display}]"
                             update_job_status(
                                 job_id, 
                                 "active", 
@@ -829,7 +890,7 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
                                 total=total_records,
                                 status_message=f"{msg_prefix} ({analyzed_count}/{total_records}): {lead_name}"
                             )
-                            render_cli_progress(analyzed_count, total_records, prefix="Lead Analysis", status=f"- {lead_name}")
+                            render_cli_progress(analyzed_count, total_records, prefix=f"Qualifying ({offer_display})", status=f"- {lead_name}")
                             
                             # Add default fallback values matching reference CSV schema
                             rev_cnt = record.get("reviews_count") or 0
@@ -837,8 +898,6 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
                             has_phone = bool(record.get("phone") and str(record.get("phone")).strip() and str(record.get("phone")).lower() != 'nan')
                             has_web = bool(record.get("website") and str(record.get("website")).strip() and str(record.get("website")).lower() != 'nan')
                             
-                            record["lead_potential"] = "Low Potential Lead"
-                            record["insight"] = "N/A (LLM analysis skipped)"
                             record["valuable_data"] = record.get("full_text", "")
                             
                             # Extract initial location deterministically from Full Address & search query
@@ -857,28 +916,85 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
                             record["instagram_activity"] = ""
                             record["facebook"] = record.get("facebook") or "Not Found"
                             record["contact_person"] = "Not Listed"
-                            record["problem_found"] = "Limited online accessibility" if not has_web else "Opportunity to improve digital presence"
-                            record["problem_evidence"] = "No website and no WhatsApp - hard to reach" if not has_web else "Could benefit from website or social media"
-                            record["recommended_service"] = "WhatsApp Business API + Website optimization"
-                            record["pitch_angle"] = "Help with digital marketing and website development"
-                            record["lead_score"] = 50
-                            record["lead_tier"] = format_lead_tier(50)
-                            record["contact_method"] = "WhatsApp" if has_phone else "Call"
                             record["outreach_status"] = "Not Contacted"
                             record["follow_up_date"] = ""
                             record["response"] = ""
                             record["notes"] = f"{rev_cnt} reviews @ {rat_val} rating"
+                            record["target_offer"] = offer_display
+
+                            # Deterministic offer-specific qualification fallback
+                            s_off = (service_offer or "all_round").lower()
+                            if s_off == "website":
+                                if not has_web:
+                                    record["problem_found"] = "No dedicated website found on Google Maps listing"
+                                    record["problem_evidence"] = "Profile only lists phone number; missing direct appointment booking and online conversion"
+                                    record["recommended_service"] = "Custom Mobile-Responsive Direct-Booking Website"
+                                    record["pitch_angle"] = "Convert Google Maps searchers into direct paying clients with a modern website"
+                                    record["personalized_hook"] = f"Hey {lead_name} team, noticed your Google profile has great local interest but no direct website for client bookings. We build fast, high-converting sites to capture those leads on autopilot."
+                                    def_score = 92 if rev_cnt >= 10 else 85
+                                else:
+                                    record["problem_found"] = "Existing website can be upgraded for speed & mobile conversions"
+                                    record["problem_evidence"] = f"Website active: {record.get('website')}"
+                                    record["recommended_service"] = "Conversion-Focused Website Redesign"
+                                    record["pitch_angle"] = "Upgrade user experience to double online inquiries"
+                                    record["personalized_hook"] = f"Hey {lead_name} team, saw your website! We help local service businesses modernize their mobile booking funnel to increase inbound bookings."
+                                    def_score = 55
+                            elif s_off == "ai_agent":
+                                record["problem_found"] = "Inquiry volume handled manually over phone with no 24/7 instant WhatsApp/voice response"
+                                record["problem_evidence"] = f"Business has {rev_cnt} reviews and active phone, but no automated after-hours response"
+                                record["recommended_service"] = "24/7 WhatsApp & Voice AI Receptionist"
+                                record["pitch_angle"] = "Capture 100% of after-hours and peak-hour inquiries without hiring extra staff"
+                                record["personalized_hook"] = f"Hey {lead_name} team, saw your {rev_cnt} reviews! Most businesses lose 30%+ of client inquiries after hours. We deploy 24/7 WhatsApp AI agents that answer queries and book appointments instantly."
+                                def_score = 90 if has_phone and rev_cnt >= 15 else 70
+                            elif s_off == "crm_automation":
+                                record["problem_found"] = "Manual lead capture and scheduling without automated CRM pipelines"
+                                record["problem_evidence"] = "No automated booking system detected on profile"
+                                record["recommended_service"] = "WhatsApp Automated Lead Capture & CRM Workflow"
+                                record["pitch_angle"] = "Stop losing leads to slow response times with instant WhatsApp confirmations"
+                                record["personalized_hook"] = f"Hey {lead_name} team, we help local businesses automate client booking and instant WhatsApp confirmations so no customer slip through the cracks."
+                                def_score = 85
+                            elif s_off == "local_seo":
+                                rat_flt = float(rat_val) if (rat_val != "N/A" and str(rat_val).replace(".", "", 1).isdigit()) else 5.0
+                                if rat_flt < 4.4 or rev_cnt < 30:
+                                    record["problem_found"] = f"Rating is {rat_val} ({rev_cnt} reviews) - losing Google 3-Pack rank to competitors"
+                                    record["problem_evidence"] = f"Google rating: {rat_val}, total reviews: {rev_cnt}"
+                                    record["recommended_service"] = "Google 3-Pack SEO & Automated 5-Star Review Growth"
+                                    record["pitch_angle"] = "Outrank local competitors and automate positive review collection"
+                                    record["personalized_hook"] = f"Hey {lead_name} team, noticed your Google profile! We help businesses rank in the top 3 on Google Maps and automate 5-star review collection from satisfied clients."
+                                    def_score = 88
+                                else:
+                                    record["problem_found"] = "Strong profile; opportunity for competitor defense"
+                                    record["problem_evidence"] = f"{rev_cnt} reviews @ {rat_val} rating"
+                                    record["recommended_service"] = "Local SEO Domination"
+                                    record["pitch_angle"] = "Maintain top local rankings against emerging competitors"
+                                    record["personalized_hook"] = f"Hey {lead_name} team, congrats on your great {rat_val} rating! We help top-rated businesses maintain #1 Google Maps positioning."
+                                    def_score = 60
+                            else:
+                                record["problem_found"] = "Limited online accessibility" if not has_web else "Opportunity to improve digital presence"
+                                record["problem_evidence"] = "No website and no WhatsApp" if not has_web else "Could benefit from customer automation"
+                                record["recommended_service"] = "WhatsApp Business API + Website optimization"
+                                record["pitch_angle"] = "Help with digital marketing and client automation"
+                                record["personalized_hook"] = f"Hey {lead_name} team, noticed your Google listing! We help businesses automate patient/client bookings and upgrade their digital presence."
+                                def_score = 75 if not has_web else 50
+
+                            record["lead_score"] = def_score
+                            record["lead_tier"] = format_lead_tier(def_score)
+                            record["contact_method"] = "WhatsApp" if has_phone else "Call"
+                            record["lead_potential"] = "High Potential Lead" if def_score >= 70 else "Medium Potential Lead"
+                            record["insight"] = f"Lead Score: {def_score}/100. Recommended: {record['recommended_service']}."
                             
                             # Perform LLM analysis if AI keys are available
                             if has_ai and record.get("full_text"):
-                                print(f"Analyzing lead: '{record.get('name')}'...")
+                                print(f"Analyzing lead: '{record.get('name')}' for [{offer_display}]...")
                                 try:
                                     res_data, used_model_tag = analyze_lead_with_fallback(
                                         record,
                                         provider="huggingface",
                                         requested_model=model,
                                         hf_token=huggingface_key,
-                                        enable_fallback=enable_fallback
+                                        enable_fallback=enable_fallback,
+                                        service_offer=service_offer,
+                                        custom_goal=custom_goal
                                     )
                                     
                                     c_ai = res_data.get("city")
@@ -887,24 +1003,25 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
                                     record["city"] = c_ai if c_ai and str(c_ai).strip().lower() not in ['unknown', 'nan', 'none', ''] else init_city
                                     record["zone"] = z_ai if z_ai and str(z_ai).strip().lower() not in ['unknown', 'nan', 'none', ''] else init_zone
                                     record["locality"] = l_ai if l_ai and str(l_ai).strip().lower() not in ['unknown', 'nan', 'none', ''] else init_locality
-                                    record["website_quality"] = res_data.get("website_quality", "")
-                                    record["mobile_website"] = res_data.get("mobile_website", "Unknown")
-                                    record["online_booking"] = res_data.get("online_booking", "No")
+                                    record["website_quality"] = res_data.get("website_quality", record["website_quality"])
+                                    record["mobile_website"] = res_data.get("mobile_website", record["mobile_website"])
+                                    record["online_booking"] = res_data.get("online_booking", record["online_booking"])
                                     record["whatsapp"] = res_data.get("whatsapp", "Yes" if has_phone else "No")
                                     record["instagram"] = record.get("instagram") or res_data.get("instagram") or "Not Found"
                                     record["instagram_activity"] = res_data.get("instagram_activity", "")
                                     record["facebook"] = record.get("facebook") or res_data.get("facebook") or "Not Found"
                                     raw_cp = res_data.get("contact_person", "Not Listed")
                                     record["contact_person"] = "Not Listed" if not raw_cp or raw_cp.lower() in ["unknown", "none", "not listed", "n/a"] else raw_cp
-                                    record["problem_found"] = res_data.get("problem_found", "Opportunity to improve digital presence")
-                                    record["problem_evidence"] = res_data.get("problem_evidence", "Could benefit from website or social media")
-                                    record["recommended_service"] = res_data.get("recommended_service", "WhatsApp Business API + Website optimization")
-                                    record["pitch_angle"] = res_data.get("pitch_angle", "Help with digital marketing and website development")
+                                    record["problem_found"] = res_data.get("problem_found") or record["problem_found"]
+                                    record["problem_evidence"] = res_data.get("problem_evidence") or record["problem_evidence"]
+                                    record["recommended_service"] = res_data.get("recommended_service") or record["recommended_service"]
+                                    record["pitch_angle"] = res_data.get("pitch_angle") or record["pitch_angle"]
+                                    record["personalized_hook"] = res_data.get("personalized_hook") or res_data.get("outreach_message") or record["personalized_hook"]
                                     
                                     try:
-                                        record["lead_score"] = int(res_data.get("lead_score", 50))
+                                        record["lead_score"] = int(res_data.get("lead_score", record["lead_score"]))
                                     except (ValueError, TypeError):
-                                        record["lead_score"] = 50
+                                        pass
                                         
                                     tier = format_lead_tier(record["lead_score"], res_data.get("lead_tier"))
                                     record["lead_tier"] = tier
@@ -996,10 +1113,12 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
             "social_links": "Social Media Links",
             "web_results": "Web Results",
             "contact_person": "Contact Person",
+            "target_offer": "Target Offer",
             "problem_found": "Problem Found",
             "problem_evidence": "Problem Evidence",
             "recommended_service": "Recommended Service",
             "pitch_angle": "Pitch Angle",
+            "personalized_hook": "Personalized Hook",
             "lead_score": "Lead Score",
             "lead_tier": "Lead Tier",
             "Contact Method": "Contact Method",
@@ -1262,10 +1381,12 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
             "Instagram Activity",
             "Facebook",
             "Contact Person",
+            "Target Offer",
             "Problem Found",
             "Problem Evidence",
             "Recommended Service",
             "Pitch Angle",
+            "Personalized Hook",
             "Lead Score",
             "Lead Tier",
             "Contact Method",
@@ -1319,12 +1440,12 @@ def process_and_cleanup_data(job_id=None, query=None, merge=True, provider="hugg
         )
 
 
-def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True):
+def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True, provider="huggingface", model=None, hf_token=None, enable_fallback=True, service_offer="all_round", custom_goal=""):
     """
     Main function to run the scraping workflow.
     Uses multi-strategy infinite scrolling to discover all listings up to `limit`
     (or till the genuine end of Google Maps results), then uses dedicated place detail
-    navigation to extract 100% accurate, desync-free business leads.
+    navigation to extract 100% accurate, desync-free business leads qualified for the target offer.
     """
     safe_query = sanitize_string(query)
     print(f"Starting scraper for query: '{safe_query}' (Limit: {limit}, Headless: {headless}, Merge: {merge})")
@@ -1444,7 +1565,8 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
             browser.close()
             process_and_cleanup_data(
                 job_id=job_id, query=query, merge=merge, provider=provider,
-                model=model, hf_token=hf_token, enable_fallback=enable_fallback
+                model=model, hf_token=hf_token, enable_fallback=enable_fallback,
+                service_offer=service_offer, custom_goal=custom_goal
             )
             return
 
@@ -1743,7 +1865,9 @@ def scrape_google_maps(query, limit=100, headless=False, job_id=None, merge=True
         provider=provider,
         model=model,
         hf_token=hf_token,
-        enable_fallback=enable_fallback
+        enable_fallback=enable_fallback,
+        service_offer=service_offer,
+        custom_goal=custom_goal
     )
 
 
@@ -1984,6 +2108,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Disable automatic fallback to alternative models on 503 or rate limit errors"
     )
+    parser.add_argument(
+        "--service-offer",
+        type=str,
+        default="all_round",
+        choices=["all_round", "website", "ai_agent", "crm_automation", "local_seo", "custom"],
+        help="Target service or offer to qualify leads for (all_round, website, ai_agent, crm_automation, local_seo, custom)"
+    )
+    parser.add_argument(
+        "--custom-goal",
+        type=str,
+        default="",
+        help="Custom pitch description or ICP instructions for the AI"
+    )
     
     args = parser.parse_args()
     
@@ -2022,7 +2159,9 @@ if __name__ == "__main__":
             provider=args.provider,
             model=args.model,
             hf_token=args.hf_token,
-            enable_fallback=not args.no_fallback
+            enable_fallback=not args.no_fallback,
+            service_offer=args.service_offer,
+            custom_goal=args.custom_goal
         )
     except Exception as e:
         print(f"\nAn error occurred during execution: {e}", file=sys.stderr)

@@ -33,7 +33,10 @@ import {
   Server,
   Wifi,
   Zap,
-  Terminal
+  Terminal,
+  Copy,
+  Wand2,
+  Bot
 } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import EditLeadModal from '@/components/EditLeadModal';
@@ -53,6 +56,8 @@ interface LeadRun {
   stage?: string;
   current?: number;
   total?: number;
+  serviceOffer?: string;
+  customGoal?: string;
 }
 
 export interface LeadRecord {
@@ -78,6 +83,8 @@ export interface LeadRecord {
   "Contact Person": string | null;
   "Problem Found": string | null;
   "Problem Evidence": string | null;
+  "Target Offer"?: string | null;
+  "Personalized Hook"?: string | null;
   "Recommended Service": string | null;
   "Pitch Angle": string | null;
   "Lead Score": number | null;
@@ -131,6 +138,69 @@ export function extractFallbackLocation(address?: string | null) {
   return { locality: foundLocality, city: foundCity, zone: foundZone };
 }
 
+export const SERVICE_OFFERS = [
+  {
+    id: 'all_round',
+    label: 'All-Round',
+    title: 'All-Round Audit',
+    icon: Sparkles,
+    badge: 'Standard',
+    badgeColor: 'border-indigo-500/30 text-indigo-400 bg-indigo-950/40',
+    color: 'indigo',
+    desc: 'General digital presence, website, ratings, and contact channels.'
+  },
+  {
+    id: 'website',
+    label: 'Website Design',
+    title: 'Website Development Pitch',
+    icon: Globe,
+    badge: 'High Conversion',
+    badgeColor: 'border-blue-500/30 text-blue-400 bg-blue-950/40',
+    color: 'blue',
+    desc: 'Targets established businesses with 15+ reviews that have NO website.'
+  },
+  {
+    id: 'ai_agent',
+    label: 'AI Agents & Bots',
+    title: 'AI Receptionist & 24/7 Bots',
+    icon: Bot,
+    badge: 'High Ticket',
+    badgeColor: 'border-purple-500/30 text-purple-400 bg-purple-950/40',
+    color: 'purple',
+    desc: 'Targets high-call businesses lacking 24/7 instant WhatsApp/Voice response.'
+  },
+  {
+    id: 'crm_automation',
+    label: 'CRM & Automation',
+    title: 'CRM & Lead Follow-ups',
+    icon: Zap,
+    badge: 'Enterprise',
+    badgeColor: 'border-amber-500/30 text-amber-400 bg-amber-950/40',
+    color: 'amber',
+    desc: 'Targets clinics & agencies needing automated calendar bookings & follow-ups.'
+  },
+  {
+    id: 'local_seo',
+    label: 'Local SEO',
+    title: 'Local SEO & Google Reviews',
+    icon: Search,
+    badge: 'Growth',
+    badgeColor: 'border-emerald-500/30 text-emerald-400 bg-emerald-950/40',
+    color: 'emerald',
+    desc: 'Targets businesses with <4.3 rating or <30 reviews to pitch reputation growth.'
+  },
+  {
+    id: 'custom',
+    label: 'Custom ICP',
+    title: 'Custom Persona Pitch',
+    icon: Compass,
+    badge: 'Custom',
+    badgeColor: 'border-pink-500/30 text-pink-400 bg-pink-950/40',
+    color: 'pink',
+    desc: 'Evaluates leads strictly against your custom value prop and target persona.'
+  }
+];
+
 function HomeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -148,6 +218,23 @@ function HomeContent() {
   const [websiteFilter, setWebsiteFilter] = useState<'all' | 'website' | 'no_website'>('all');
   const [tierFilter, setTierFilter] = useState<'all' | 'hot' | 'good' | 'medium' | 'skip'>('all');
   const [leadSearchTerm, setLeadSearchTerm] = useState('');
+
+  // Enterprise Offer Qualification State
+  const [serviceOffer, setServiceOffer] = useState<string>('all_round');
+  const [customGoal, setCustomGoal] = useState<string>('');
+
+  // AI Strategy Copilot (LLM Mode) State
+  const [showCopilotModal, setShowCopilotModal] = useState<boolean>(false);
+  const [copilotInput, setCopilotInput] = useState<string>('');
+  const [copilotLoading, setCopilotLoading] = useState<boolean>(false);
+  const [copilotResult, setCopilotResult] = useState<{
+    query?: string;
+    service_offer?: string;
+    custom_goal?: string;
+    suggested_queries?: string[];
+    target_audience?: string;
+  } | null>(null);
+  const [copiedHookIdx, setCopiedHookIdx] = useState<number | null>(null);
 
   // Scraper Input State
   const [query, setQuery] = useState('');
@@ -444,6 +531,57 @@ function HomeContent() {
     showToast('AI API configurations saved successfully', 'success');
   };
 
+  // AI Strategy Copilot Execution
+  const handleRunCopilot = async (overrideGoal?: string) => {
+    const goalText = (overrideGoal || copilotInput).trim();
+    if (!goalText) {
+      showToast('Please enter your lead generation goal or pitch offer', 'info');
+      return;
+    }
+    setCopilotLoading(true);
+    try {
+      const res = await fetch('/api/ai-copilot', {
+        method: 'POST',
+        headers: getApiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          goal: goalText,
+          hf_api_key: hfApiKey || null,
+          backend_url: backendUrl || null
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        setCopilotResult(data.data);
+        if (data.data.query) setQuery(data.data.query);
+        if (data.data.service_offer) setServiceOffer(data.data.service_offer);
+        if (data.data.custom_goal) setCustomGoal(data.data.custom_goal);
+        showToast('🎯 Strategy synthesized & applied by AI Copilot!', 'success');
+      } else {
+        showToast(data.error || 'Could not analyze goal', 'error');
+      }
+    } catch (err: any) {
+      showToast(`Copilot error: ${err.message}`, 'error');
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  const handleApplyCopilotStrategy = (strategy: any) => {
+    if (strategy.query) setQuery(strategy.query);
+    if (strategy.service_offer) setServiceOffer(strategy.service_offer);
+    if (strategy.custom_goal) setCustomGoal(strategy.custom_goal);
+    setShowCopilotModal(false);
+    showToast('Applied strategy to search query & qualification rubric!', 'success');
+  };
+
+  const handleCopyHook = (text: string, idx: number) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedHookIdx(idx);
+    showToast('Copied personalized hook to clipboard!', 'success');
+    setTimeout(() => setCopiedHookIdx(null), 2500);
+  };
+
   // Handle Form Scrape Submit
   const handleStartScrape = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -466,7 +604,9 @@ function HomeContent() {
           ai_model: chosenModel || null,
           enable_fallback: enableFallback,
           merge_existing: mergeExisting,
-          backend_url: backendUrl || null
+          backend_url: backendUrl || null,
+          service_offer: serviceOffer,
+          custom_goal: customGoal
         })
       });
       const data = await res.json();
@@ -1101,6 +1241,7 @@ function HomeContent() {
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Rating</th>
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Phone & WhatsApp</th>
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Website</th>
+                              <th className="px-4 py-3.5 font-semibold text-indigo-300 min-w-[200px]">🎯 Pitch Hook & Offer</th>
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Lead Score</th>
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Tier</th>
                               <th className="px-4 py-3.5 font-semibold text-slate-300">Method</th>
@@ -1249,6 +1390,54 @@ function HomeContent() {
                                         Not Found
                                       </span>
                                     )}
+                                  </td>
+
+                                  {/* 6.5. Personalized Hook & Target Offer */}
+                                  <td className="px-4 py-3.5 min-w-[240px] max-w-[320px]">
+                                    {lead["Target Offer"] && (
+                                      <div className="mb-1">
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wide bg-indigo-950/70 border border-indigo-500/30 text-indigo-300">
+                                          {String(lead["Target Offer"]).replace('_', ' ').toUpperCase()}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {(() => {
+                                      const hook = lead["Personalized Hook"] || lead["Pitch Angle"] || lead["Problem Found"] || '';
+                                      if (!hook) return <span className="text-slate-600 text-xs italic">N/A</span>;
+                                      const isCopied = copiedHookIdx === idx;
+                                      return (
+                                        <div className="group relative">
+                                          <p className="text-[11px] text-slate-200 line-clamp-2 leading-relaxed" title={hook}>
+                                            &ldquo;{hook}&rdquo;
+                                          </p>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleCopyHook(hook, idx);
+                                            }}
+                                            className={`mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all ${
+                                              isCopied
+                                                ? 'bg-emerald-600 text-white shadow-sm'
+                                                : 'bg-slate-900/90 text-indigo-300 border border-indigo-500/20 hover:bg-indigo-600 hover:text-white'
+                                            }`}
+                                            title="Copy personalized cold outreach hook"
+                                          >
+                                            {isCopied ? (
+                                              <>
+                                                <Check className="w-2.5 h-2.5" />
+                                                <span>Copied!</span>
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Copy className="w-2.5 h-2.5" />
+                                                <span>Copy Hook</span>
+                                              </>
+                                            )}
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
                                   </td>
 
                                   {/* 7. Lead Score */}
@@ -1572,24 +1761,170 @@ function HomeContent() {
                       </button>
                     </div>
 
-                {/* Search query input */}
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="query" className="text-sm font-semibold text-slate-300">
-                    Google Maps Search Query
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      id="query"
-                      required
-                      placeholder="e.g. Gyms in Navrangpura, Ahmedabad or Cafes in Seattle"
-                      value={query}
-                      onChange={e => setQuery(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 transition-all pr-10"
-                    />
-                    <Search className="w-5 h-5 text-slate-600 absolute right-3.5 top-3" />
-                  </div>
-                </div>
+                    {/* AI Strategy Copilot Card (LLM Mode) */}
+                    <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 border border-indigo-500/30 p-4 rounded-2xl relative overflow-hidden backdrop-blur-md">
+                      <div className="flex items-center justify-between gap-3 mb-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-lg text-white shadow-sm shadow-indigo-500/20">
+                            <Bot className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black tracking-wide text-white uppercase flex items-center gap-1.5">
+                              <span>AI Strategy Copilot</span>
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                LLM MODE
+                              </span>
+                            </h4>
+                            <p className="text-[11px] text-slate-400">Describe your client offer in natural language (English / Hinglish)</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowCopilotModal(true)}
+                          className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold underline underline-offset-2 shrink-0"
+                        >
+                          Full Assistant →
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            placeholder="e.g. Dentists in South Delhi to pitch WhatsApp AI appointment booking bot"
+                            value={copilotInput}
+                            onChange={(e) => setCopilotInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleRunCopilot();
+                              }
+                            }}
+                            className="w-full bg-slate-950/90 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder:text-slate-500 transition-all font-medium"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={copilotLoading}
+                          onClick={() => handleRunCopilot()}
+                          className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                        >
+                          {copilotLoading ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Analyzing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="w-3.5 h-3.5 text-amber-300" />
+                              <span>Synthesize</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Fast Preset Inspiration Chips */}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                        <span className="text-[10px] text-slate-500 font-semibold">Try:</span>
+                        {[
+                          { label: '🌐 Websites for Clinics', goal: 'Dental clinics in South Delhi without website to pitch custom web design' },
+                          { label: '🤖 AI Bot for Salons', goal: 'Luxury hair salons in Mumbai to pitch WhatsApp AI appointment receptionist' },
+                          { label: '⚡ CRM for Realtors', goal: 'Real estate consultants in Gurgaon for automated CRM and lead follow up' },
+                          { label: '📈 5-Star Reviews for Gyms', goal: 'Gyms and fitness centers in Bangalore with low rating to pitch local SEO review growth' }
+                        ].map((chip, cIdx) => (
+                          <button
+                            key={cIdx}
+                            type="button"
+                            onClick={() => {
+                              setCopilotInput(chip.goal);
+                              handleRunCopilot(chip.goal);
+                            }}
+                            className="px-2 py-0.5 rounded-lg text-[10px] font-medium bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-all"
+                          >
+                            {chip.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Enterprise Target Offer Selector */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-semibold text-slate-200 flex items-center gap-1.5">
+                          <span>Target Offer & Qualification Rubric</span>
+                          <span className="text-[10px] font-mono text-indigo-400 bg-indigo-950/60 border border-indigo-500/20 px-1.5 py-0.2 rounded">
+                            Enterprise Matrix
+                          </span>
+                        </label>
+                        <span className="text-xs text-slate-400">
+                          How agencies filter high-probability leads
+                        </span>
+                      </div>
+
+                      {/* Pill Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {SERVICE_OFFERS.map((offer) => {
+                          const isSelected = serviceOffer === offer.id;
+                          const OfferIcon = offer.icon;
+                          return (
+                            <button
+                              key={offer.id}
+                              type="button"
+                              onClick={() => setServiceOffer(offer.id)}
+                              className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between gap-1.5 ${
+                                isSelected
+                                  ? 'bg-indigo-950/60 border-indigo-500 text-white shadow-lg shadow-indigo-950/50 ring-1 ring-indigo-500/40'
+                                  : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <OfferIcon className={`w-4 h-4 ${isSelected ? 'text-indigo-400' : 'text-slate-500'}`} />
+                                  <span className="text-xs font-bold">{offer.label}</span>
+                                </div>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                              </div>
+                              <span className="text-[10px] text-slate-400 leading-tight line-clamp-2">
+                                {offer.desc}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* If Custom ICP selected, show custom goal prompt */}
+                      {serviceOffer === 'custom' && (
+                        <div className="mt-1 p-3 bg-slate-950 border border-pink-500/30 rounded-xl space-y-1.5 animate-fadeIn">
+                          <label className="text-xs font-bold text-pink-300">Custom Pitch Angle & Qualification Persona</label>
+                          <textarea
+                            rows={2}
+                            placeholder="Describe what makes a lead qualified for your service (e.g. Only businesses doing luxury catering with 50+ reviews but lacking online order booking)"
+                            value={customGoal}
+                            onChange={(e) => setCustomGoal(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 focus:border-pink-500 outline-none rounded-lg p-2.5 text-xs text-slate-200 placeholder:text-slate-600 transition-all font-sans resize-none"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Search query input */}
+                    <div className="flex flex-col gap-2">
+                      <label htmlFor="query" className="text-sm font-semibold text-slate-300">
+                        Google Maps Search Query
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          id="query"
+                          required
+                          placeholder="e.g. Dental clinics in South Delhi or Cafes in Seattle"
+                          value={query}
+                          onChange={e => setQuery(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 outline-none rounded-xl px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 transition-all pr-10"
+                        />
+                        <Search className="w-5 h-5 text-slate-600 absolute right-3.5 top-3" />
+                      </div>
+                    </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   {/* Limit selection */}
@@ -1911,7 +2246,19 @@ function HomeContent() {
                             <tr key={idx} className="hover:bg-slate-900/10 transition-all">
                               {/* Query/Title */}
                               <td className="px-6 py-4">
-                                <div className="font-semibold text-slate-100">{run.query}</div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-slate-100">{run.query}</span>
+                                  {run.serviceOffer && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-indigo-950/80 border border-indigo-500/30 text-indigo-300">
+                                      {run.serviceOffer.replace('_', ' ')}
+                                    </span>
+                                  )}
+                                </div>
+                                {run.customGoal && (
+                                  <div className="text-[10px] text-slate-400 italic mt-0.5 truncate max-w-sm" title={run.customGoal}>
+                                    Goal: &ldquo;{run.customGoal}&rdquo;
+                                  </div>
+                                )}
                                 {run.filename && (
                                   <div className="text-[10px] text-slate-500 font-mono mt-0.5">{run.filename}</div>
                                 )}
@@ -2811,6 +3158,194 @@ function HomeContent() {
                     </>
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Strategy Copilot Assistant Modal */}
+      {showCopilotModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-indigo-500/40 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
+            {/* Top Glowing Header */}
+            <div className="p-6 border-b border-slate-800 bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl text-white shadow-lg shadow-indigo-500/25">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">AI LeadGen Strategy Copilot</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      LLM MODE
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Formulate high-converting Google Maps queries & qualification rubrics
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCopilotModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5 block">
+                  Describe What You Want to Pitch or Sell
+                </label>
+                <p className="text-xs text-slate-400 mb-2 leading-relaxed">
+                  Type your business offer, target city, and ideal client in plain English or Hinglish. AI will determine the optimal search query, select the matching enterprise lead qualification rubric, and generate personalized cold outreach hooks.
+                </p>
+                <textarea
+                  rows={3}
+                  value={copilotInput}
+                  onChange={(e) => setCopilotInput(e.target.value)}
+                  placeholder="e.g. 'I want to pitch website design and SEO to cosmetic dentists in South Delhi who have reviews but no good website' or 'Pitching 24/7 WhatsApp AI receptionist to real estate consultants in Gurgaon'"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl p-3 text-xs text-slate-200 placeholder:text-slate-600 outline-none transition-all resize-none font-medium"
+                />
+              </div>
+
+              {/* Preset buttons */}
+              <div>
+                <span className="text-[11px] font-semibold text-slate-400 block mb-1.5">Or choose a quick agency campaign blueprint:</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[
+                    {
+                      label: '🌐 Website Pitch for Dental Clinics',
+                      goal: 'Dental clinics in South Delhi with good reviews but missing website to pitch custom web design'
+                    },
+                    {
+                      label: '🤖 WhatsApp AI Receptionist for Salons',
+                      goal: 'High-end hair & beauty salons in Mumbai to pitch 24/7 WhatsApp booking and inquiry bot'
+                    },
+                    {
+                      label: '⚡ Automated CRM for Real Estate',
+                      goal: 'Real estate consultants in Gurgaon to pitch instant CRM lead follow-up and appointment sync'
+                    },
+                    {
+                      label: '📈 5-Star Local Review Growth for Gyms',
+                      goal: 'Gyms and fitness centers in Bangalore with low reviews to pitch Google Maps ranking & review boost'
+                    }
+                  ].map((preset, pIdx) => (
+                    <button
+                      key={pIdx}
+                      type="button"
+                      onClick={() => {
+                        setCopilotInput(preset.goal);
+                        handleRunCopilot(preset.goal);
+                      }}
+                      className="text-left p-2.5 bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800 rounded-xl text-xs text-slate-300 hover:text-white transition-all flex flex-col gap-0.5"
+                    >
+                      <span className="font-semibold text-indigo-300">{preset.label}</span>
+                      <span className="text-[10px] text-slate-500 truncate">{preset.goal}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Synthesized Results Card */}
+              {copilotResult && (
+                <div className="p-4 bg-slate-950/90 border border-indigo-500/40 rounded-xl space-y-3.5 animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Synthesized Campaign Strategy</span>
+                    </span>
+                    {copilotResult.service_offer && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-indigo-950 text-indigo-300 border border-indigo-500/30">
+                        Offer: {copilotResult.service_offer.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <span className="text-slate-500 font-semibold block">Recommended Google Maps Search Query:</span>
+                      <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-slate-100 font-bold mt-1 flex items-center justify-between">
+                        <span>&ldquo;{copilotResult.query}&rdquo;</span>
+                        <span className="text-[10px] text-indigo-400 font-mono">Primary Query</span>
+                      </div>
+                    </div>
+
+                    {copilotResult.target_audience && (
+                      <div>
+                        <span className="text-slate-500 font-semibold block">Target Customer Profile (ICP):</span>
+                        <p className="text-slate-300 mt-0.5 leading-relaxed">{copilotResult.target_audience}</p>
+                      </div>
+                    )}
+
+                    {copilotResult.suggested_queries && copilotResult.suggested_queries.length > 1 && (
+                      <div>
+                        <span className="text-slate-500 font-semibold block mb-1">Alternative Search Queries to Scale:</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {copilotResult.suggested_queries.map((q, qIdx) => (
+                            <button
+                              key={qIdx}
+                              type="button"
+                              onClick={() => {
+                                setQuery(q);
+                                showToast(`Selected query: "${q}"`, 'info');
+                              }}
+                              className="px-2.5 py-1 bg-slate-900 hover:bg-indigo-950/70 border border-slate-800 hover:border-indigo-500/40 rounded-lg text-xs text-slate-300 hover:text-indigo-200 transition-all font-mono"
+                            >
+                              {q}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowCopilotModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Close
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={copilotLoading || !copilotInput.trim()}
+                  onClick={() => handleRunCopilot()}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {copilotLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                      <span>Synthesizing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Re-Analyze</span>
+                    </>
+                  )}
+                </button>
+
+                {copilotResult && (
+                  <button
+                    type="button"
+                    onClick={() => handleApplyCopilotStrategy(copilotResult)}
+                    className="px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Apply Strategy & Fill Form</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>

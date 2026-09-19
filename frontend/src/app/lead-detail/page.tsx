@@ -17,7 +17,9 @@ import {
   AlertCircle,
   FileText,
   Save,
-  Check
+  Check,
+  Copy,
+  Sparkles
 } from 'lucide-react';
 import Toast, { ToastMessage } from '@/components/Toast';
 import { extractFallbackLocation } from '../page';
@@ -45,6 +47,8 @@ interface LeadRecord {
   "Contact Person": string | null;
   "Problem Found": string | null;
   "Problem Evidence": string | null;
+  "Target Offer"?: string | null;
+  "Personalized Hook"?: string | null;
   "Recommended Service": string | null;
   "Pitch Angle": string | null;
   "Lead Score": number | null;
@@ -75,6 +79,7 @@ function LeadDetailInner() {
   const [followUpDate, setFollowUpDate] = useState('');
   const [response, setResponse] = useState('');
   const [notes, setNotes] = useState('');
+  const [copiedHook, setCopiedHook] = useState(false);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -585,7 +590,14 @@ function LeadDetailInner() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <span className="text-slate-500 text-xs">Recommended Pitch Offer</span>
-                    <p className="text-indigo-400 font-extrabold mt-1 text-sm">{lead["Recommended Service"] || 'N/A'}</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <p className="text-indigo-400 font-extrabold text-sm">{lead["Recommended Service"] || 'N/A'}</p>
+                      {lead["Target Offer"] && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wide bg-indigo-950/80 border border-indigo-500/30 text-indigo-300">
+                          {lead["Target Offer"].replace('_', ' ')}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <span className="text-slate-500 text-xs">Contact Preference</span>
@@ -593,8 +605,51 @@ function LeadDetailInner() {
                   </div>
                 </div>
 
+                {/* Personalized Cold Outreach Hook (Offer Specific) */}
+                {lead["Personalized Hook"] && (
+                  <div className="p-4 bg-gradient-to-br from-indigo-950/60 via-purple-950/40 to-slate-900 border border-indigo-500/30 rounded-xl relative overflow-hidden shadow-lg shadow-indigo-950/40">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="text-indigo-300 font-black text-xs uppercase tracking-wider flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Personalized Cold Outreach Hook</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (lead["Personalized Hook"]) {
+                            navigator.clipboard.writeText(lead["Personalized Hook"]);
+                            setCopiedHook(true);
+                            showToast('Copied personalized hook to clipboard!', 'success');
+                            setTimeout(() => setCopiedHook(false), 2500);
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                          copiedHook
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-indigo-600/20 hover:bg-indigo-600 hover:text-white text-indigo-300 border border-indigo-500/30'
+                        }`}
+                      >
+                        {copiedHook ? (
+                          <>
+                            <Check className="w-3 h-3" />
+                            <span>Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy Hook</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-slate-100 text-xs leading-relaxed italic bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
+                      &ldquo;{lead["Personalized Hook"]}&rdquo;
+                    </p>
+                  </div>
+                )}
+
                 <div className="p-4 bg-gradient-to-tr from-indigo-950/30 to-purple-950/30 border border-indigo-500/15 rounded-xl">
-                  <span className="text-indigo-400 font-extrabold text-xs uppercase tracking-wider">Sales Pitch / outreach Angle</span>
+                  <span className="text-indigo-400 font-extrabold text-xs uppercase tracking-wider">Sales Pitch / Outreach Angle</span>
                   <p className="text-slate-200 mt-1 leading-relaxed font-semibold">{lead["Pitch Angle"] || 'N/A'}</p>
                 </div>
               </div>

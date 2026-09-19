@@ -15,7 +15,9 @@ export async function POST(req: NextRequest) {
       ai_provider,
       ai_model,
       enable_fallback,
-      merge_existing
+      merge_existing,
+      service_offer,
+      custom_goal
     } = body;
 
     if (!query) {
@@ -59,12 +61,14 @@ export async function POST(req: NextRequest) {
     statusData[jobId] = {
       query: query,
       limit: limit || 100,
+      service_offer: service_offer || 'all_round',
+      custom_goal: custom_goal || '',
       status: 'active',
       stage: 'starting',
       current: 0,
       total: limit || 100,
       progress: 0,
-      status_message: 'Initializing scraper process...',
+      status_message: `Initializing scraper (${(service_offer || 'all_round').replace('_', ' ')})...`,
       provider: 'huggingface',
       model: ai_model || 'Qwen/Qwen2.5-72B-Instruct',
       timestamp: new Date().toISOString()
@@ -107,6 +111,12 @@ export async function POST(req: NextRequest) {
     }
     if (enable_fallback === false) {
       args.push('--no-fallback');
+    }
+    if (service_offer) {
+      args.push('--service-offer', service_offer);
+    }
+    if (custom_goal) {
+      args.push('--custom-goal', custom_goal);
     }
 
     const env: NodeJS.ProcessEnv = {

@@ -147,6 +147,96 @@ def get_logs(jobId: Optional[str] = None, tail: int = 100):
     }
 
 
+@app.post("/api/ai-copilot")
+async def ai_copilot(req: Request):
+    """
+    AI Strategy Copilot (LLM Mode):
+    Analyzes natural language sales goals or pitches and automatically determines:
+    - Optimized Google Maps search queries
+    - Best matching service offer (website, ai_agent, crm_automation, local_seo, custom)
+    - Value proposition & ICP qualification instructions
+    """
+    body = await req.json()
+    raw_goal = body.get("goal", "").strip()
+    hf_token = body.get("hf_api_key") or os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HF_TOKEN")
+    
+    if not raw_goal:
+        raise HTTPException(status_code=400, detail="Goal cannot be empty")
+        
+    system_prompt = (
+        "You are an expert B2B Lead Generation & Local Market Strategist.\n"
+        "The user will describe their service, offer, or lead generation goal in natural language (English or Hinglish).\n"
+        "Your job is to analyze their intent and return a clean JSON object with:\n"
+        "1. query: the most effective, direct Google Maps search query string (e.g. 'dental clinics in South Delhi' or 'hair salons in Mumbai').\n"
+        "2. service_offer: one of ['website', 'ai_agent', 'crm_automation', 'local_seo', 'custom'].\n"
+        "3. custom_goal: a concise 1-2 sentence description of the target ICP and exact value proposition to qualify leads.\n"
+        "4. suggested_queries: an array of 3-5 alternative localized Google Maps search query variations.\n"
+        "5. target_audience: a short summary of the ideal customer profile.\n\n"
+        "Respond ONLY with a valid JSON object without markdown or code fences."
+    )
+    
+    payload = {
+        "model": "Qwen/Qwen2.5-72B-Instruct",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"User Goal: {raw_goal}"}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 512
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token.strip()}"
+        
+    endpoints = [
+        "https://router.huggingface.co/v1/chat/completions",
+        "https://router.huggingface.co/hf-inference/v1/chat/completions",
+        "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-72B-Instruct/v1/chat/completions"
+    ]
+    
+    if hf_token:
+        for ep in endpoints:
+            try:
+                resp = requests.post(ep, headers=headers, json=payload, timeout=20.0)
+                if resp.status_code == 200:
+                    c = resp.json()["choices"][0]["message"]["content"].strip()
+                    c_clean = re.sub(r'^```(?:json)?\s*', '', c, flags=re.MULTILINE)
+                    c_clean = re.sub(r'```\s*$', '', c_clean, flags=re.MULTILINE).strip()
+                    s = c_clean.find('{')
+                    e = c_clean.rfind('}')
+                    if s != -1 and e != -1:
+                        data = json.loads(c_clean[s:e+1])
+                        return {"success": True, "data": data}
+            except Exception:
+                pass
+                
+    # Intelligent Heuristic Fallback if offline or LLM unavailable
+    goal_lower = raw_goal.lower()
+    inferred_offer = "all_round"
+    if any(k in goal_lower for k in ["website", "web design", "site", "web dev", "redesign", "landing page"]):
+        inferred_offer = "website"
+    elif any(k in goal_lower for k in ["ai agent", "chatbot", "chat bot", "voice agent", "receptionist", "phone agent", "ai bot"]):
+        inferred_offer = "ai_agent"
+    elif any(k in goal_lower for k in ["crm", "automation", "automate", "pipeline", "follow up", "followup"]):
+        inferred_offer = "crm_automation"
+    elif any(k in goal_lower for k in ["seo", "reviews", "review", "google maps rank", "rating", "reputation"]):
+        inferred_offer = "local_seo"
+    else:
+        inferred_offer = "custom"
+        
+    return {
+        "success": True,
+        "data": {
+            "query": raw_goal,
+            "service_offer": inferred_offer,
+            "custom_goal": raw_goal,
+            "suggested_queries": [raw_goal],
+            "target_audience": f"Prospective clients for {inferred_offer.replace('_', ' ').title()}"
+        }
+    }
+
+
 @app.post("/api/scrape")
 async def start_scrape(req: Request, background_tasks: BackgroundTasks):
     body = await req.json()
@@ -157,6 +247,8 @@ async def start_scrape(req: Request, background_tasks: BackgroundTasks):
     ai_model = body.get("ai_model", "Qwen/Qwen2.5-72B-Instruct")
     enable_fallback = body.get("enable_fallback", True)
     merge_existing = body.get("merge_existing", True)
+    service_offer = body.get("service_offer", "all_round")
+    custom_goal = body.get("custom_goal", "")
 
     if not query:
         raise HTTPException(status_code=400, detail="Query is required")
@@ -168,12 +260,14 @@ async def start_scrape(req: Request, background_tasks: BackgroundTasks):
     status[job_id] = {
         "query": query,
         "limit": limit,
+        "service_offer": service_offer,
+        "custom_goal": custom_goal,
         "status": "active",
         "stage": "starting",
         "current": 0,
         "total": limit,
         "progress": 0,
-        "status_message": "Initializing scraper process...",
+        "status_message": f"Initializing scraper ({service_offer.replace('_', ' ').title()})...",
         "provider": "huggingface",
         "model": ai_model,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
@@ -187,8 +281,11 @@ async def start_scrape(req: Request, background_tasks: BackgroundTasks):
         "--limit", str(limit),
         "--job-id", job_id,
         "--provider", "huggingface",
-        "--model", ai_model
+        "--model", ai_model,
+        "--service-offer", service_offer
     ]
+    if custom_goal:
+        cmd.extend(["--custom-goal", custom_goal])
     if headless:
         cmd.append("--headless")
     if not merge_existing:
