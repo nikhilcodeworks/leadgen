@@ -5,7 +5,8 @@ import * as xlsx from 'xlsx';
 
 export async function GET(req: NextRequest) {
   try {
-    const backendUrl = req.headers.get('x-backend-url') || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    const { searchParams } = new URL(req.url);
+    const backendUrl = req.headers.get('x-backend-url') || searchParams.get('backend_url') || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
     if (backendUrl) {
       try {
         const cleanBackend = backendUrl.replace(/\/+$/, '');
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
           status: remoteRes.status,
           headers: {
             'Content-Type': contentType,
-            'Content-Disposition': remoteRes.headers.get('content-disposition') || ''
+            'Content-Disposition': remoteRes.headers.get('content-disposition') || `attachment; filename="${searchParams.get('file') || 'leads.xlsx'}"`
           }
         });
       } catch (fErr: any) {
@@ -31,7 +32,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const { searchParams } = new URL(req.url);
     const file = searchParams.get('file');
     const download = searchParams.get('download');
     const format = (searchParams.get('format') || 'xlsx').toLowerCase();
@@ -57,12 +57,12 @@ export async function GET(req: NextRequest) {
       let filePath = path.join(leadsdataDir, safeFilename);
 
       if (!fs.existsSync(filePath)) {
-        // Fallback: match by query slug or partial filename
+        // Fallback: match by query slug or partial filename with normalized underscores
         if (fs.existsSync(leadsdataDir)) {
           const allFiles = fs.readdirSync(leadsdataDir).filter(f => f.endsWith('.xlsx'));
-          const fileSlug = safeFilename.replace(/_job_\d+\.xlsx$/, '').replace(/\.xlsx$/, '').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+          const fileSlug = safeFilename.replace(/_job_\d+\.xlsx$/, '').replace(/\.xlsx$/, '').replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
           const match = allFiles.find(f => {
-            const fSlug = f.replace(/_job_\d+\.xlsx$/, '').replace(/\.xlsx$/, '').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+            const fSlug = f.replace(/_job_\d+\.xlsx$/, '').replace(/\.xlsx$/, '').replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
             return fSlug.includes(fileSlug) || fileSlug.includes(fSlug);
           });
           if (match) {
@@ -317,7 +317,8 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const backendUrl = req.headers.get('x-backend-url') || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
+    const { searchParams } = new URL(req.url);
+    const backendUrl = req.headers.get('x-backend-url') || searchParams.get('backend_url') || process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL;
     if (backendUrl) {
       try {
         const cleanBackend = backendUrl.replace(/\/+$/, '');
@@ -331,7 +332,6 @@ export async function DELETE(req: NextRequest) {
       }
     }
 
-    const { searchParams } = new URL(req.url);
     const file = searchParams.get('file');
     const jobId = searchParams.get('jobId');
 

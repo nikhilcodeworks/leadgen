@@ -834,22 +834,49 @@ function HomeContent() {
     }
   };
 
-  // Download File (Excel or CSV)
-  const handleDownloadFile = (filename?: string | null, format: 'xlsx' | 'csv' = 'xlsx') => {
+  // Generate download URL with backend_url query param for remote tunnels
+  const getDownloadUrl = (targetFile: string, format: 'xlsx' | 'csv' = 'xlsx') => {
+    const params = new URLSearchParams({
+      file: targetFile,
+      download: 'true',
+      format: format,
+      ...(backendUrl ? { backend_url: backendUrl } : {})
+    });
+    return `/api/leads?${params.toString()}`;
+  };
+
+  // Download File (Excel or CSV) - fetches blob with getApiHeaders() to support remote Colab backends
+  const handleDownloadFile = async (filename?: string | null, format: 'xlsx' | 'csv' = 'xlsx') => {
     const target = filename || selectedFile || runs.find(r => r.filename)?.filename;
     if (!target) {
-      showToast('No file available to download yet', 'info');
+      showToast('No spreadsheet file available to download yet', 'info');
       return;
     }
     const downloadFilename = format === 'csv' ? target.replace(/\.xlsx$/i, '') + '.csv' : target;
-    const downloadUrl = `/api/leads?file=${encodeURIComponent(target)}&download=true&format=${format}`;
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.setAttribute('download', downloadFilename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast(`Downloading ${downloadFilename}...`, 'success');
+    showToast(`Downloading ${downloadFilename}...`, 'info');
+    try {
+      const url = getDownloadUrl(target, format);
+      const res = await fetch(url, {
+        headers: getApiHeaders()
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || errJson.detail || `Server returned ${res.status}`);
+      }
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.setAttribute('download', downloadFilename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+      showToast(`Downloaded ${downloadFilename} successfully!`, 'success');
+    } catch (err: any) {
+      console.error('Download error:', err);
+      showToast(`Download failed: ${err.message}`, 'error');
+    }
   };
 
   // Filter runs list
@@ -1048,14 +1075,14 @@ function HomeContent() {
                 <div className="flex flex-wrap items-center gap-2.5">
                   {/* Download Excel (.xlsx) */}
                   <a
-                    href={selectedFile ? `/api/leads?file=${encodeURIComponent(selectedFile)}&download=true&format=xlsx` : '#'}
+                    href={selectedFile ? getDownloadUrl(selectedFile, 'xlsx') : '#'}
                     download={selectedFile || 'leads.xlsx'}
                     onClick={(e) => {
+                      e.preventDefault();
                       if (!selectedFile) {
-                        e.preventDefault();
                         showToast('No spreadsheet file selected to download', 'info');
                       } else {
-                        showToast(`Downloading ${selectedFile}...`, 'success');
+                        handleDownloadFile(selectedFile, 'xlsx');
                       }
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600/10 hover:bg-emerald-600 hover:text-white border border-emerald-500/30 text-emerald-400 rounded-xl text-sm font-semibold transition-all cursor-pointer shadow-sm"
@@ -1067,14 +1094,14 @@ function HomeContent() {
 
                   {/* Download CSV (.csv) */}
                   <a
-                    href={selectedFile ? `/api/leads?file=${encodeURIComponent(selectedFile)}&download=true&format=csv` : '#'}
+                    href={selectedFile ? getDownloadUrl(selectedFile, 'csv') : '#'}
                     download={(selectedFile ? selectedFile.replace(/\.xlsx$/i, '') : 'leads') + '.csv'}
                     onClick={(e) => {
+                      e.preventDefault();
                       if (!selectedFile) {
-                        e.preventDefault();
                         showToast('No file selected to download', 'info');
                       } else {
-                        showToast(`Downloading ${(selectedFile.replace(/\.xlsx$/i, ''))}.csv...`, 'success');
+                        handleDownloadFile(selectedFile, 'csv');
                       }
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 bg-cyan-600/10 hover:bg-cyan-600 hover:text-white border border-cyan-500/30 text-cyan-400 rounded-xl text-sm font-semibold transition-all cursor-pointer shadow-sm"
@@ -2426,14 +2453,14 @@ function HomeContent() {
                                       <div className="flex items-center gap-1.5">
                                         {/* Download Excel (.xlsx) */}
                                         <a
-                                          href={hasFile ? `/api/leads?file=${encodeURIComponent(targetFile!)}&download=true&format=xlsx` : '#'}
+                                          href={hasFile ? getDownloadUrl(targetFile!, 'xlsx') : '#'}
                                           download={targetFile || 'leads.xlsx'}
                                           onClick={(e) => {
+                                            e.preventDefault();
                                             if (!hasFile) {
-                                              e.preventDefault();
                                               showToast('Spreadsheet file is still compiling or not available yet', 'info');
                                             } else {
-                                              showToast(`Downloading ${targetFile}...`, 'success');
+                                              handleDownloadFile(targetFile, 'xlsx');
                                             }
                                           }}
                                           className={`px-2.5 py-1.5 rounded-lg border transition-all inline-flex items-center gap-1.5 text-xs font-semibold ${
@@ -2449,14 +2476,14 @@ function HomeContent() {
 
                                         {/* Download CSV (.csv) */}
                                         <a
-                                          href={hasFile ? `/api/leads?file=${encodeURIComponent(targetFile!)}&download=true&format=csv` : '#'}
+                                          href={hasFile ? getDownloadUrl(targetFile!, 'csv') : '#'}
                                           download={csvTargetName}
                                           onClick={(e) => {
+                                            e.preventDefault();
                                             if (!hasFile) {
-                                              e.preventDefault();
                                               showToast('File is still compiling or not available yet', 'info');
                                             } else {
-                                              showToast(`Downloading ${csvTargetName}...`, 'success');
+                                              handleDownloadFile(targetFile, 'csv');
                                             }
                                           }}
                                           className={`px-2.5 py-1.5 rounded-lg border transition-all inline-flex items-center gap-1.5 text-xs font-semibold ${

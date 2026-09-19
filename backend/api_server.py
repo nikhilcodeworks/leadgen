@@ -346,15 +346,27 @@ def get_leads(file: Optional[str] = None, download: Optional[str] = None, format
         file_path = LEADSDATA_DIR / safe_name
 
         if not file_path.exists():
-            # Fallback search
-            all_xlsx = list(LEADSDATA_DIR.glob("*.xlsx"))
-            slug = re.sub(r'[^a-zA-Z0-9]', '_', safe_name.replace(".xlsx", "")).lower()
-            for f in all_xlsx:
-                f_slug = re.sub(r'[^a-zA-Z0-9]', '_', f.name.replace(".xlsx", "")).lower()
-                if slug in f_slug or f_slug in slug:
-                    file_path = f
-                    safe_name = f.name
-                    break
+            # Fallback 1: Check status.json for registered filename
+            for j_id, j_info in status_data.items():
+                if j_id in safe_name or safe_name in str(j_info.get("filename", "")):
+                    reg_file = j_info.get("filename")
+                    if reg_file and (LEADSDATA_DIR / reg_file).exists():
+                        file_path = LEADSDATA_DIR / reg_file
+                        safe_name = reg_file
+                        break
+
+            # Fallback 2: Slug matching with normalized underscores
+            if not file_path.exists():
+                all_xlsx = list(LEADSDATA_DIR.glob("*.xlsx"))
+                slug = re.sub(r'[^a-zA-Z0-9]', '_', safe_name.replace(".xlsx", "")).lower()
+                slug = re.sub(r'_+', '_', slug).strip('_')
+                for f in all_xlsx:
+                    f_slug = re.sub(r'[^a-zA-Z0-9]', '_', f.name.replace(".xlsx", "")).lower()
+                    f_slug = re.sub(r'_+', '_', f_slug).strip('_')
+                    if slug in f_slug or f_slug in slug:
+                        file_path = f
+                        safe_name = f.name
+                        break
 
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
